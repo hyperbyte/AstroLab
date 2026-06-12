@@ -1,0 +1,46 @@
+# ---- Build output ----
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+artifacts/
+publish/
+*.dll
+*.exe
+*.pdb
+
+# ---- .NET / NuGet ----
+project.lock.json
+project.assets.json
+*.nupkg
+.packages/
+
+# ---- Visual Studio / Rider / VS Code ----
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userprefs
+*.csproj.user
+
+# ---- OS cruft ----
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store
+
+# ---- AstroLab: dados de teste (Autosave.tif ~246 MB, outputs, logs) ----
+testdata/
+
+# ---- Python (scripts de referência/validação) ----
+__pycache__/
+*.py[cod]
+
+# ---- Claude Code (config local, não partilhada) ----
+.claude/settings.local.json
+
+# ---- Logs ----
+*.log
+
+# NOTA: Models/*.onnx fica VERSIONADO de propósito (modelo de IA, ~12 MB) para o
+# repositório ficar executável após clone.

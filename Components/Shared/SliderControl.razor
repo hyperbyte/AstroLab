@@ -1,0 +1,47 @@
+@* Slider: label + range (oninput contínuo) + valor numérico editável + reset *@
+
+<div class="slider @(Disabled ? "disabled" : "")">
+    <div class="slider-head">
+        <span class="slider-label">@Label</span>
+        <input class="slider-num" type="number" min="@Inv(Min)" max="@Inv(Max)" step="@Inv(Step)"
+               value="@Format(Value)" @onchange="OnNumChange" disabled="@Disabled" />
+        <button class="slider-reset" title="Repor" @onclick="Reset" disabled="@Disabled">↺</button>
+    </div>
+    <input class="slider-range" type="range" min="@Inv(Min)" max="@Inv(Max)" step="@Inv(Step)"
+           value="@Inv(Value)" @oninput="OnRangeInput" disabled="@Disabled" />
+    @if (!string.IsNullOrEmpty(Note))
+    {
+        <div class="slider-note">@Note</div>
+    }
+</div>
+
+@code {
+    [Parameter] public string Label { get; set; } = "";
+    [Parameter] public double Value { get; set; }
+    [Parameter] public EventCallback<double> ValueChanged { get; set; }
+    [Parameter] public double Min { get; set; }
+    [Parameter] public double Max { get; set; }
+    [Parameter] public double Step { get; set; } = 1;
+    [Parameter] public double Default { get; set; }
+    [Parameter] public string? Note { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    static string Inv(double v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+    string Format(double v) => (Step >= 1 ? v.ToString("0") : v.ToString("0.###",
+        System.Globalization.CultureInfo.InvariantCulture));
+
+    Task OnRangeInput(ChangeEventArgs e) => Commit(e.Value?.ToString());
+    Task OnNumChange(ChangeEventArgs e) => Commit(e.Value?.ToString());
+    Task Reset() => ValueChanged.InvokeAsync(Default);
+
+    Task Commit(string? raw)
+    {
+        if (double.TryParse(raw, System.Globalization.CultureInfo.InvariantCulture, out var v)
+            || double.TryParse(raw, out v))
+        {
+            v = Math.Clamp(v, Min, Max);
+            return ValueChanged.InvokeAsync(v);
+        }
+        return Task.CompletedTask;
+    }
+}
