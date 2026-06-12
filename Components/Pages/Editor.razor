@@ -1,0 +1,548 @@
+@page "/"
+@rendermode InteractiveServer
+@using AstroLab.Services
+@using AstroLab.Components.Shared
+@inject ProcessingSession Session
+@inject IJSRuntime JS
+
+<PageTitle>AstroLab</PageTitle>
+
+<div class="editor">
+    <!-- ============================ PREVIEW ============================ -->
+    <div class="preview-pane">
+        @if (_imgSrc is not null)
+        {
+            <img class="preview-img" src="@_imgSrc" alt="preview" @ref="_previewImg"
+                 @onclick="OnPreviewClick" title="clica para centrar o preview de NR" />
+        }
+        else if (!_busy)
+        {
+            <div class="preview-empty">
+                <img src="favicon.svg" class="empty-logo" alt="" />
+                <div class="empty-title">AstroLab</div>
+                <div>Abre um Autosave.tif para começar →</div>
+            </div>
+        }
+
+        @if (_busy)
+        {
+            <div class="overlay">
+                <div class="overlay-stage">@_stage</div>
+                <div class="overlay-bar"><div class="overlay-fill" style="width:@((_pct * 100).ToString("0"))%"></div></div>
+                <div class="overlay-pct">@((_pct * 100).ToString("0")) %</div>
+            </div>
+        }
+
+        <div class="footer">
+            @if (Session.IsLoaded)
+            {
+                <span>@Session.FullWidth × @Session.FullHeight</span>
+                <span>·</span>
+                <span>~@(Session.ApproxImageBytes / (1024 * 1024)) MB img</span>
+                <span>·</span>
+                <span>render @_lastMs ms</span>
+                @if (_rendering)
+                {
+                    <span>·</span>
+                    <span class="rendering">a renderizar@(Session.Params.AiSharpen ? " (IA)…" : "…")</span>
+                }
+            }
+            else
+            {
+                <span>sem imagem</span>
+            }
+        </div>
+    </div>
+
+    <!-- ============================ CONTROLS =========================== -->
+    <div class="controls">
+        <div class="brand">
+            <img src="favicon.svg" class="brand-logo" alt="" />
+            <span class="brand-name">AstroLab</span>
+        </div>
+        <section>
+            <h3>Abrir</h3>
+            <div class="open-row">
+                <input class="path-input" placeholder="C:\…\Autosave.tif" @bind="_path" @bind:event="oninput"
+                       disabled="@_busy" />
+                <button class="btn icon-btn" @onclick="Browse" disabled="@_busy" title="Procurar ficheiro…">📂</button>
+                <button class="btn" @onclick="OpenFromPath" disabled="@(_busy || string.IsNullOrWhiteSpace(_path))">Abrir</button>
+            </div>
+            <label class="upload-row">
+                <InputFile OnChange="OnUpload" accept=".tif,.tiff" disabled="@_busy" />
+            </label>
+            <div class="slider-note">…ou upload (browser → servidor; lento para ficheiros grandes)</div>
+            @if (_recents.Count > 0)
+            {
+                <select class="recents" @onchange="OnRecentSelected" disabled="@_busy">
+                    <option value="">recentes ▾</option>
+                    @foreach (var r in _recents)
+                    {
+                        <option value="@r">@Path.GetFileName(r)</option>
+                    }
+                </select>
+            }
+            @if (_error is not null)
+            {
+                <div class="error">@_error</div>
+            }
+        </section>
+
+        <section>
+            <h3>Fundo</h3>
+            <label class="check">
+                <input type="checkbox" checked="@_radial" @onchange="OnRadialToggle" disabled="@_busy" />
+                Termos radiais (vinhetagem)
+            </label>
+            <div class="slider-note">desligar quando a calibração com bias/dark flats estiver correta — recorre a Fase A</div>
+        </section>
+
+        <section>
+            <h3>Tone</h3>
+            <SliderControl Label="Stretch" Min="100" Max="1200" Step="10" Default="600" Disabled="@(!_ready)"
+                           Value="Session.Params.Stretch"
+                           ValueChanged="@(v => OnParam(p => p with { Stretch = v }))" />
+            <SliderControl Label="Céu (fundo)" Min="0.06" Max="0.20" Step="0.005" Default="0.12" Disabled="@(!_ready)"
+                           Value="Session.Params.Sky"
+                           ValueChanged="@(v => OnParam(p => p with { Sky = v }))" />
+            <SliderControl Label="Black point" Min="0" Max="0.05" Step="0.001" Default="0" Disabled="@(!_ready)"
+                           Value="Session.Params.BlackPoint"
+                           ValueChanged="@(v => OnParam(p => p with { BlackPoint = v }))" />
+            <SliderControl Label="SCNR" Min="0" Max="1" Step="0.05" Default="0.7" Disabled="@(!_ready)"
+                           Value="Session.Params.Scnr"
+                           ValueChanged="@(v => OnParam(p => p with { Scnr = v }))" />
+            <SliderControl Label="Saturação" Min="0" Max="1" Step="0.05" Default="0.45" Disabled="@(!_ready)"
+                           Value="Session.Params.Saturation"
+                           ValueChanged="@(v => OnParam(p => p with { Saturation = v }))" />
+        </section>
+
+        <section>
+            <h3>Ruído</h3>
+            <SliderControl Label="Força NR" Min="0" Max="1" Step="0.05" Default="1.0" Disabled="@(!_ready)"
+                           Note="aplica-se no export — usar pré-visualização"
+                           Value="Session.Params.NoiseReduction"
+                           ValueChanged="@(v => OnParam(p => p with { NoiseReduction = v }, rerender: false))" />
+            <button class="btn btn-block" @onclick="OpenNrPreview" disabled="@(!_ready)">
+                Pré-visualizar NR (crop 100%)
+            </button>
+        </section>
+
+        <section>
+            <h3>Estrelas</h3>
+            <label class="check">
+                <input type="checkbox" checked="@Session.Params.ComaCorrect"
+                       @onchange="OnComaToggle" disabled="@(!_ready)" />
+                Correção de coma (realce radial)
+            </label>
+            <div class="slider-note">cosmético, rápido, no preview live — não é correção ótica real</div>
+
+            <label class="check" style="margin-top:.6rem">
+                <input type="checkbox" checked="@Session.Params.AiSharpen"
+                       @onchange="OnAiToggle" disabled="@(!_ready)" />
+                Deconvolução IA (estrelas) — classe BlurX
+            </label>
+            <div class="slider-note">deconvolução real por IA (GPU). Subtil no preview reduzido — o efeito vê-se a 1:1 no <b>inspetor</b> e no <b>export</b> full-res. Torna o preview mais lento.</div>
+        </section>
+
+        <section>
+            <button class="btn btn-block" @onclick="OpenInspector" disabled="@(!_ready)">Inspeção 1:1 (campo)</button>
+            <button class="btn btn-block" @onclick="ResetDefaults" disabled="@(!_ready)">Repor defaults</button>
+            <button class="btn btn-block btn-accent" @onclick="OpenExport" disabled="@(!_ready)">Exportar</button>
+        </section>
+    </div>
+</div>
+
+@if (_inspOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseInspector">
+        <div class="modal modal-inspector" @onclick:stopPropagation="true">
+            <div class="modal-head">
+                <span>Inspeção de campo 1:1 — cantos, bordas e centro</span>
+                <button class="slider-reset" @onclick="CloseInspector">🗙</button>
+            </div>
+            <div class="inspector-scroll">
+                @if (_inspImg is not null)
+                {
+                    <img src="@_inspImg" alt="inspeção 1:1" />
+                }
+                else
+                {
+                    <div class="slider-note" style="padding:2rem">a render…</div>
+                }
+            </div>
+            <div class="modal-foot">
+                <span class="slider-note">@_inspMs ms · células @_inspCell px (1:1) · tone atual + NR</span>
+                <button class="btn" @onclick="RenderInspector" disabled="@_inspBusy">Atualizar</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_exportOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseExport">
+        <div class="modal modal-narrow" @onclick:stopPropagation="true">
+            <div class="modal-head">
+                <span>Exportar (full-res)</span>
+                <button class="slider-reset" @onclick="CloseExport" disabled="@_exporting">🗙</button>
+            </div>
+
+            <label class="slider-label">Prefixo de saída</label>
+            <input class="path-input" @bind="_exportPrefix" disabled="@_exporting" />
+            <div class="slider-note">gera <code>{prefixo}_16bit.tif</code> + <code>{prefixo}.jpg</code> (q93)</div>
+
+            @if (_exporting || _exportDone)
+            {
+                <div class="overlay-bar" style="margin:.8rem 0;width:100%">
+                    <div class="overlay-fill" style="width:@((_exportPct * 100).ToString("0"))%"></div>
+                </div>
+                <div class="slider-note">@(_exportDone ? "concluído" : _exportStage) — @((_exportPct * 100).ToString("0")) %</div>
+            }
+            @if (_exportError is not null)
+            {
+                <div class="error">@_exportError</div>
+            }
+
+            <div class="modal-foot">
+                @if (_exportDone)
+                {
+                    <button class="btn" @onclick="OpenFolder">Abrir pasta</button>
+                    <button class="btn" @onclick="CloseExport">Fechar</button>
+                }
+                else
+                {
+                    <span></span>
+                    <button class="btn btn-accent" @onclick="DoExport" disabled="@_exporting">
+                        @(_exporting ? "a exportar…" : "Exportar")
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@if (_nrOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseNr">
+        <div class="modal" @onclick:stopPropagation="true">
+            <div class="modal-head">
+                <span>Pré-visualização de ruído — crop 100% (600×400)</span>
+                <button class="slider-reset" @onclick="CloseNr">🗙</button>
+            </div>
+            <div class="nr-pair">
+                <figure>
+                    <img src="@_nrBefore" alt="antes" />
+                    <figcaption>Antes (sem NR)</figcaption>
+                </figure>
+                <figure>
+                    <img src="@_nrAfter" alt="depois" />
+                    <figcaption>Depois (NR @Session.Params.NoiseReduction.ToString("0.##"))</figcaption>
+                </figure>
+            </div>
+            <div class="modal-foot">
+                <span class="slider-note">centro: @_nrCx, @_nrCy · @_nrMs ms — clica no preview para mudar o centro</span>
+                <button class="btn" @onclick="RenderNr" disabled="@_nrBusy">Atualizar</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    string _path = "";
+    bool _radial = true;        // termos radiais no background (Fase A)
+    List<string> _recents = new();
+    bool _busy;                 // Fase A a correr
+    bool _ready => Session.IsLoaded && !_busy;
+    string _stage = "";
+    double _pct;
+    string? _imgSrc;
+    long _lastMs;
+    bool _rendering;
+    string? _error;
+    int _ver;                   // versão de render p/ descartar obsoletos
+
+    // --- preview de NR ---
+    ElementReference _previewImg;
+    bool _nrOpen, _nrBusy;
+    string? _nrBefore, _nrAfter;
+    int _nrCx, _nrCy;           // centro do crop (coords full-res)
+    long _nrMs;
+
+    // --- inspetor 1:1 ---
+    bool _inspOpen, _inspBusy;
+    string? _inspImg;
+    long _inspMs;
+    int _inspCell = 512;
+
+    // --- export ---
+    bool _exportOpen, _exporting, _exportDone;
+    string _exportPrefix = "";
+    string _exportStage = "";
+    double _exportPct;
+    string? _exportFolder;
+    string? _exportError;
+
+    protected override void OnInitialized() => _recents = RecentFiles.Load();
+
+    async Task OnRecentSelected(ChangeEventArgs e)
+    {
+        var sel = e.Value?.ToString();
+        if (!string.IsNullOrEmpty(sel)) { _path = sel; await OpenFromPath(); }
+    }
+
+    async Task Browse()
+    {
+        var dir = Session.SourcePath is { } sp ? Path.GetDirectoryName(sp) : null;
+        var picked = await Task.Run(() => NativeFileDialog.Pick(dir));
+        if (!string.IsNullOrEmpty(picked)) { _path = picked; await OpenFromPath(); }
+    }
+
+    async Task OnUpload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file is null) return;
+
+        _error = null; _busy = true; _imgSrc = null; _stage = "a receber upload…"; _pct = 0;
+        await InvokeAsync(StateHasChanged);
+
+        string tmp = Path.Combine(Path.GetTempPath(), "astrolab_" + Path.GetFileName(file.Name));
+        try
+        {
+            await using var fs = File.Create(tmp);
+            await using var rs = file.OpenReadStream(maxAllowedSize: 600_000_000);
+            await rs.CopyToAsync(fs);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Upload falhou: {ex.Message}"; _busy = false;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        _path = tmp;
+        await OpenFromPath();
+    }
+
+    async Task OpenFromPath()
+    {
+        _error = null;
+        if (!File.Exists(_path)) { _error = "Ficheiro não encontrado."; return; }
+
+        Session.Radial = _radial;
+        await RunPhaseA(() => Session.OpenAsync(_path, MakeProgress()), () =>
+        {
+            RecentFiles.Add(_path);
+            _recents = RecentFiles.Load();
+        });
+    }
+
+    async Task OnRadialToggle(ChangeEventArgs e)
+    {
+        _radial = e.Value is true || e.Value?.ToString() == "True";
+        Session.Radial = _radial;
+        if (Session.IsLoaded)
+            await RunPhaseA(() => Session.ReprocessAsync(MakeProgress()));
+    }
+
+    Progress<(string stage, double pct)> MakeProgress() =>
+        new(t => { _stage = t.stage; _pct = t.pct; InvokeAsync(StateHasChanged); });
+
+    async Task RunPhaseA(Func<Task> work, Action? onSuccess = null)
+    {
+        _error = null;
+        _busy = true; _imgSrc = null; _stage = "a iniciar…"; _pct = 0;
+        await InvokeAsync(StateHasChanged);
+        try
+        {
+            await work();
+            onSuccess?.Invoke();
+            await RenderNow(++_ver);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Falha: {ex.Message}";
+        }
+        finally
+        {
+            _busy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    Task OnComaToggle(ChangeEventArgs e) =>
+        OnParam(p => p with { ComaCorrect = e.Value is true });
+
+    Task OnAiToggle(ChangeEventArgs e) =>   // re-renderiza o preview (mais lento com IA)
+        OnParam(p => p with { AiSharpen = e.Value is true });
+
+    Task OnParam(Func<ToneParams, ToneParams> mutate, bool rerender = true)
+    {
+        Session.Params = mutate(Session.Params);
+        return rerender ? ScheduleRender() : Task.CompletedTask;
+    }
+
+    async Task ResetDefaults()
+    {
+        Session.Params = ToneParams.Defaults;
+        await ScheduleRender();
+        await InvokeAsync(StateHasChanged);   // atualiza posições dos sliders
+    }
+
+    // ----------------------------------------------------- preview NR ----
+    async Task OnPreviewClick(MouseEventArgs e)
+    {
+        if (!_ready) return;
+        var f = await JS.InvokeAsync<double[]>("astroLab.clickFrac", _previewImg, e.ClientX, e.ClientY);
+        _nrCx = (int)(f[0] * Session.FullWidth);
+        _nrCy = (int)(f[1] * Session.FullHeight);
+        if (_nrOpen) await RenderNr();
+    }
+
+    async Task OpenNrPreview()
+    {
+        if (_nrCx == 0 && _nrCy == 0) { _nrCx = Session.FullWidth / 2; _nrCy = Session.FullHeight / 2; }
+        _nrOpen = true;
+        await RenderNr();
+    }
+
+    void CloseNr() => _nrOpen = false;
+
+    async Task RenderNr()
+    {
+        _nrBusy = true;
+        await InvokeAsync(StateHasChanged);
+        await Session.Gate.WaitAsync();
+        try
+        {
+            var prm = Session.Params;
+            int cx = _nrCx, cy = _nrCy;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var (before, after) = await Task.Run(() =>
+                PreviewRenderer.RenderNrCrop(Session.LinearFull!, prm, cx, cy));
+            sw.Stop();
+            _nrMs = sw.ElapsedMilliseconds;
+            _nrBefore = "data:image/jpeg;base64," + Convert.ToBase64String(before);
+            _nrAfter = "data:image/jpeg;base64," + Convert.ToBase64String(after);
+        }
+        finally
+        {
+            Session.Gate.Release();
+            _nrBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // ------------------------------------------------------ inspetor 1:1 ----
+    async Task OpenInspector()
+    {
+        _inspOpen = true;
+        _inspImg = null;
+        await RenderInspector();
+    }
+
+    void CloseInspector() => _inspOpen = false;
+
+    async Task RenderInspector()
+    {
+        _inspBusy = true;
+        await InvokeAsync(StateHasChanged);
+        int cell = Math.Clamp(await JS.InvokeAsync<int>("astroLab.inspectorCell", 8), 128, 1200);
+        _inspCell = cell;
+        await Session.Gate.WaitAsync();
+        try
+        {
+            var prm = Session.Params;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            byte[] jpg = await Task.Run(() =>
+                PreviewRenderer.RenderInspector(Session.LinearFull!, Session.LinearProxy!, prm, cell));
+            sw.Stop();
+            _inspMs = sw.ElapsedMilliseconds;
+            _inspImg = "data:image/jpeg;base64," + Convert.ToBase64String(jpg);
+        }
+        finally
+        {
+            Session.Gate.Release();
+            _inspBusy = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // --------------------------------------------------------- export ----
+    void OpenExport()
+    {
+        var src = Session.SourcePath!;
+        var dir = Path.GetDirectoryName(src) ?? ".";
+        var name = Path.GetFileNameWithoutExtension(src);
+        _exportPrefix = Path.Combine(dir, name + "_processed");
+        _exportDone = false; _exportError = null; _exportPct = 0;
+        _exportOpen = true;
+    }
+
+    void CloseExport() { if (!_exporting) _exportOpen = false; }
+
+    async Task DoExport()
+    {
+        _exportError = null; _exporting = true; _exportDone = false; _exportPct = 0;
+        _exportStage = "a preparar…";
+        await InvokeAsync(StateHasChanged);
+        await Session.Gate.WaitAsync();
+        try
+        {
+            var prm = Session.Params;
+            var progress = new Progress<double>(v =>
+            {
+                _exportPct = v;
+                _exportStage = v < 0.78 ? "a processar…" : "a gravar ficheiros…";
+                InvokeAsync(StateHasChanged);
+            });
+            var result = await ExportService.ExportAsync(Session.LinearFull!, prm, _exportPrefix, progress);
+            _exportFolder = result.Folder;
+            _exportDone = true;
+        }
+        catch (Exception ex) { _exportError = $"Falha no export: {ex.Message}"; }
+        finally
+        {
+            Session.Gate.Release();
+            _exporting = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    void OpenFolder()
+    {
+        if (_exportFolder is not null)
+            System.Diagnostics.Process.Start("explorer.exe", $"\"{_exportFolder}\"");
+    }
+
+    async Task ScheduleRender()
+    {
+        int v = ++_ver;
+        await Task.Delay(80);                 // debounce
+        if (v != _ver || !Session.IsLoaded) return;
+        await RenderNow(v);
+    }
+
+    async Task RenderNow(int v)
+    {
+        await Session.Gate.WaitAsync();
+        try
+        {
+            if (v != _ver) return;            // já há pedido mais recente
+            var prm = Session.Params;
+            _rendering = true;
+            await InvokeAsync(StateHasChanged);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            byte[] jpg = await Task.Run(() => PreviewRenderer.Render(Session.LinearProxy!, prm));
+            sw.Stop();
+            if (v != _ver) return;            // descarta render obsoleto
+            _imgSrc = "data:image/jpeg;base64," + Convert.ToBase64String(jpg);
+            _lastMs = sw.ElapsedMilliseconds;
+        }
+        finally
+        {
+            _rendering = false;
+            Session.Gate.Release();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

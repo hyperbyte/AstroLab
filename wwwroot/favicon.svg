@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="sky" cx="45%" cy="40%" r="80%">
+      <stop offset="0%" stop-color="#1b2233"/>
+      <stop offset="100%" stop-color="#090b11"/>
+    </radialGradient>
+    <radialGradient id="antares" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#fff4e2"/>
+      <stop offset="22%" stop-color="#ffb368"/>
+      <stop offset="55%" stop-color="#e9662a" stop-opacity=".55"/>
+      <stop offset="100%" stop-color="#e9662a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="neb" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#5e8ad9" stop-opacity=".9"/>
+      <stop offset="100%" stop-color="#3a5a9a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="url(#sky)"/>
+  <ellipse cx="43" cy="41" rx="21" ry="16" fill="url(#neb)"/>
+  <path d="M26 28 Q40 33 56 26 Q45 45 29 47 Q31 36 26 28 Z" fill="#090b11" opacity=".45"/>
+  <circle cx="22" cy="25" r="15" fill="url(#antares)"/>
+  <circle cx="22" cy="25" r="2.6" fill="#fff8f0"/>
+  <circle cx="51" cy="15" r="1.5" fill="#e6ecff"/>
+  <circle cx="13" cy="49" r="1.3" fill="#cdd6f0"/>
+  <circle cx="45" cy="53" r="1.1" fill="#bcd0ff"/>
+  <circle cx="53" cy="45" r="1.7" fill="#eaf0ff"/>
+  <circle cx="35" cy="20" r="1" fill="#dfe7ff"/>
+</svg>
