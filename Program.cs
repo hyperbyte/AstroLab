@@ -2,7 +2,7 @@ using AstroLab.Components;
 using AstroLab.Services;
 
 // Modo CLI de auto-teste: dotnet run -- tiff-test [path] | phasea <path>
-if (args.Length > 0 && args[0] is "tiff-test" or "phasea" or "phaseb" or "fullb" or "bench" or "comatest" or "aitest")
+if (args.Length > 0 && args[0] is "tiff-test" or "phasea" or "phaseb" or "fullb" or "bench" or "comatest" or "aitest" or "startest")
     return SelfTest.Run(args);
 
 var builder = WebApplication.CreateBuilder(args);
@@ -16,7 +16,10 @@ builder.WebHost.UseStaticWebAssets();
 
 // Add services to the container.
 builder.Services.AddRazorComponents()
-    .AddInteractiveServerComponents();
+    .AddInteractiveServerComponents()
+    // o clone stamp devolve o canvas (JPEG base64) via JS interop → subir o limite
+    // do hub (default 32 KB) para caber a imagem do proxy.
+    .AddHubOptions(o => o.MaximumReceiveMessageSize = 64 * 1024 * 1024);
 builder.Services.AddSingleton<ProcessingSession>();   // app local single-user
 
 var app = builder.Build();

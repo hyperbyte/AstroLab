@@ -16,6 +16,9 @@ public sealed class ProcessingSession
     public bool Radial { get; set; } = true;
     public double Crop { get; set; } = 0.012;
 
+    /// <summary>Workflow de separação de estrelas (ativo quando != null).</summary>
+    public StarWorkflow? Stars { get; set; }
+
     /// <summary>Serializa render do preview e export (um de cada vez).</summary>
     public readonly SemaphoreSlim Gate = new(1, 1);
 
@@ -47,6 +50,7 @@ public sealed class ProcessingSession
         {
             LinearFull = null;
             LinearProxy = null;
+            Stars = null;   // separação anterior deixa de ser válida
             GC.Collect();   // arrays no LOH — libertação explícita justificada (SPEC/02)
 
             await Task.Run(() =>

@@ -14,8 +14,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <!-- Modelo de deconvolução estelar (ONNX) copiado para o output. -->
-    <None Include="Models\deep_sharp_stellar_cnn.onnx" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Modelos ONNX (deconvolução + remoção de estrelas) copiados para o output. -->
+    <None Include="Models\*.onnx" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

@@ -13,7 +13,8 @@ public static class ExportService
     /// chamador deve serializar via Gate. Pico de memória ~2× full-res.
     /// </summary>
     public static async Task<ExportResult> ExportAsync(
-        LinearImage full, ToneParams p, string prefix, IProgress<double> progress)
+        LinearImage full, ToneParams p, string prefix, IProgress<double> progress,
+        StarWorkflow? stars = null)
     {
         string tif = prefix + "_16bit.tif";
         string jpg = prefix + ".jpg";
@@ -29,21 +30,34 @@ public static class ExportService
             AstroPipeline.Scnr(img, p.Scnr);
             progress.Report(0.38);
 
-            if (p.NoiseReduction > 0)
+            if (stars is not null)
             {
-                AstroPipeline.Denoise(img, p.NoiseReduction);
-                progress.Report(0.70);
-            }
-
-            if (p.ComaCorrect) AstroPipeline.ComaCorrect(img);
-
-            AstroPipeline.SaturationAndCurve(img, p.Saturation);
-            progress.Report(0.78);
-
-            if (p.AiSharpen)
-            {
-                AiSharpen.Sharpen(img, 1.0);   // deconvolução estelar IA (full-res, GPU)
+                // Modo estrelas: tom = stretch/scnr/sat (igual à separação no proxy),
+                // depois separa full-res, aplica clone+ganho/sat ao fundo e recombina.
+                AstroPipeline.SaturationAndCurve(img, p.Saturation);
+                progress.Report(0.50);
+                var starless = StarRemoval.Starless(img);
+                progress.Report(0.80);
+                var starsLayer = StarRemoval.StarsLayer(img, starless);
+                stars.ApplyToFull(starless);
+                img = StarRemoval.Screen(starless, starsLayer);
                 progress.Report(0.88);
+            }
+            else
+            {
+                if (p.NoiseReduction > 0)
+                {
+                    AstroPipeline.Denoise(img, p.NoiseReduction);
+                    progress.Report(0.70);
+                }
+                if (p.ComaCorrect) AstroPipeline.ComaCorrect(img);
+                AstroPipeline.SaturationAndCurve(img, p.Saturation);
+                progress.Report(0.78);
+                if (p.AiSharpen)
+                {
+                    AiSharpen.Sharpen(img, 1.0);   // deconvolução estelar IA (full-res, GPU)
+                    progress.Report(0.88);
+                }
             }
 
             TiffIO.Save16Bit(img, tif);

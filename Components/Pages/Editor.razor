@@ -99,26 +99,26 @@
 
         <section>
             <h3>Tone</h3>
-            <SliderControl Label="Stretch" Min="100" Max="1200" Step="10" Default="600" Disabled="@(!_ready)"
+            <SliderControl Label="Stretch" Min="100" Max="1200" Step="10" Default="600" Disabled="@(!_tone)"
                            Value="Session.Params.Stretch"
                            ValueChanged="@(v => OnParam(p => p with { Stretch = v }))" />
-            <SliderControl Label="Céu (fundo)" Min="0.06" Max="0.20" Step="0.005" Default="0.12" Disabled="@(!_ready)"
+            <SliderControl Label="Céu (fundo)" Min="0.06" Max="0.20" Step="0.005" Default="0.12" Disabled="@(!_tone)"
                            Value="Session.Params.Sky"
                            ValueChanged="@(v => OnParam(p => p with { Sky = v }))" />
-            <SliderControl Label="Black point" Min="0" Max="0.05" Step="0.001" Default="0" Disabled="@(!_ready)"
+            <SliderControl Label="Black point" Min="0" Max="0.05" Step="0.001" Default="0" Disabled="@(!_tone)"
                            Value="Session.Params.BlackPoint"
                            ValueChanged="@(v => OnParam(p => p with { BlackPoint = v }))" />
-            <SliderControl Label="SCNR" Min="0" Max="1" Step="0.05" Default="0.7" Disabled="@(!_ready)"
+            <SliderControl Label="SCNR" Min="0" Max="1" Step="0.05" Default="0.7" Disabled="@(!_tone)"
                            Value="Session.Params.Scnr"
                            ValueChanged="@(v => OnParam(p => p with { Scnr = v }))" />
-            <SliderControl Label="Saturação" Min="0" Max="1" Step="0.05" Default="0.45" Disabled="@(!_ready)"
+            <SliderControl Label="Saturação" Min="0" Max="1" Step="0.05" Default="0.45" Disabled="@(!_tone)"
                            Value="Session.Params.Saturation"
                            ValueChanged="@(v => OnParam(p => p with { Saturation = v }))" />
         </section>
 
         <section>
             <h3>Ruído</h3>
-            <SliderControl Label="Força NR" Min="0" Max="1" Step="0.05" Default="1.0" Disabled="@(!_ready)"
+            <SliderControl Label="Força NR" Min="0" Max="1" Step="0.05" Default="1.0" Disabled="@(!_tone)"
                            Note="aplica-se no export — usar pré-visualização"
                            Value="Session.Params.NoiseReduction"
                            ValueChanged="@(v => OnParam(p => p with { NoiseReduction = v }, rerender: false))" />
@@ -142,6 +142,27 @@
                 Deconvolução IA (estrelas) — classe BlurX
             </label>
             <div class="slider-note">deconvolução real por IA (GPU). Subtil no preview reduzido — o efeito vê-se a 1:1 no <b>inspetor</b> e no <b>export</b> full-res. Torna o preview mais lento.</div>
+
+            @if (Session.Stars is null)
+            {
+                <button class="btn btn-block" @onclick="SeparateStars" disabled="@(!_ready)">
+                    Separar estrelas (remover halos)
+                </button>
+            }
+            else
+            {
+                <div class="star-mode">
+                    <div class="slider-note" style="color:var(--accent)">Modo fundo (estrelas separadas)</div>
+                    <button class="btn btn-block" @onclick="OpenClone">Editar fundo — clone stamp</button>
+                    <SliderControl Label="Ganho fundo" Min="0.3" Max="2.5" Step="0.05" Default="1.0"
+                                   Value="Session.Stars.Gain"
+                                   ValueChanged="@(v => OnStarParam(() => Session.Stars!.Gain = v))" />
+                    <SliderControl Label="Saturação fundo" Min="0" Max="2.5" Step="0.05" Default="1.0"
+                                   Value="Session.Stars.Saturation"
+                                   ValueChanged="@(v => OnStarParam(() => Session.Stars!.Saturation = v))" />
+                    <button class="btn btn-block" @onclick="ExitStars">Sair (descartar separação)</button>
+                </div>
+            }
         </section>
 
         <section>
@@ -173,6 +194,32 @@
             <div class="modal-foot">
                 <span class="slider-note">@_inspMs ms · células @_inspCell px (1:1) · tone atual + NR</span>
                 <button class="btn" @onclick="RenderInspector" disabled="@_inspBusy">Atualizar</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (_cloneOpen)
+{
+    <div class="modal-backdrop" @onclick="CloseClone">
+        <div class="modal modal-inspector" @onclick:stopPropagation="true">
+            <div class="modal-head">
+                <span>Clone stamp — corrigir halo no fundo (sem estrelas)</span>
+                <button class="slider-reset" @onclick="CloseClone">🗙</button>
+            </div>
+            <div class="clone-toolbar">
+                <button class="btn" @onclick="@(() => JS.InvokeVoidAsync("astroClone.setSource"))">Definir fonte</button>
+                <label>Pincel <input type="range" min="10" max="150" value="40"
+                       @oninput="@(e => JS.InvokeVoidAsync("astroClone.setBrush", e.Value))" /></label>
+                <button class="btn" @onclick="@(() => JS.InvokeVoidAsync("astroClone.reset"))">Repor</button>
+                <span class="slider-note">@_cloneStatus</span>
+            </div>
+            <div class="inspector-scroll">
+                <canvas @ref="_cloneCanvas" class="clone-canvas"></canvas>
+            </div>
+            <div class="modal-foot">
+                <span class="slider-note">define a fonte numa zona limpa, depois arrasta sobre o halo</span>
+                <button class="btn btn-accent" @onclick="ApplyClone">Aplicar</button>
             </div>
         </div>
     </div>
@@ -258,6 +305,12 @@
     string? _imgSrc;
     long _lastMs;
     bool _rendering;
+
+    // --- separação de estrelas ---
+    bool _cloneOpen, _cloneInited;
+    ElementReference _cloneCanvas;
+    string _cloneStatus = "define a fonte numa zona limpa, depois arrasta sobre o halo";
+    bool _tone => _ready && Session.Stars is null;
     string? _error;
     int _ver;                   // versão de render p/ descartar obsoletos
 
@@ -467,6 +520,71 @@
         }
     }
 
+    // ---------------------------------------------- separação de estrelas ----
+    async Task SeparateStars()
+    {
+        _busy = true; _stage = "a separar estrelas (IA)…"; _pct = 0.5;
+        await InvokeAsync(StateHasChanged);
+        await Session.Gate.WaitAsync();
+        try
+        {
+            var prm = Session.Params;
+            var stretched = PreviewRenderer.ToneToImage(Session.LinearProxy!, prm, withNr: false);
+            var (starless, stars) = await Task.Run(() =>
+            {
+                var sl = StarRemoval.Starless(stretched);
+                return (sl, StarRemoval.StarsLayer(stretched, sl));
+            });
+            Session.Stars = new StarWorkflow { Starless = starless, Stars = stars };
+        }
+        catch (Exception ex) { _error = $"Separação falhou: {ex.Message}"; }
+        finally { Session.Gate.Release(); _busy = false; }
+        ComposeStarPreview();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    void OnStarParam(Action set) { set(); ComposeStarPreview(); }
+
+    void ComposeStarPreview()
+    {
+        if (Session.Stars is null) return;
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        byte[] jpg = PreviewRenderer.EncodeImage(Session.Stars.Compose());
+        sw.Stop();
+        _lastMs = sw.ElapsedMilliseconds;
+        _imgSrc = "data:image/jpeg;base64," + Convert.ToBase64String(jpg);
+    }
+
+    async Task ExitStars()
+    {
+        Session.Stars = null;
+        await RenderNow(++_ver);
+    }
+
+    void OpenClone() { _cloneOpen = true; _cloneInited = false; }
+    void CloseClone() => _cloneOpen = false;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (_cloneOpen && !_cloneInited && Session.Stars is not null)
+        {
+            _cloneInited = true;
+            var url = "data:image/jpeg;base64," +
+                Convert.ToBase64String(PreviewRenderer.EncodeImage(Session.Stars.BackgroundBase, 92));
+            await JS.InvokeVoidAsync("astroClone.init", _cloneCanvas, url, null);
+        }
+    }
+
+    async Task ApplyClone()
+    {
+        var dataUrl = await JS.InvokeAsync<string>("astroClone.dataUrl");
+        int comma = dataUrl.IndexOf(',');
+        var bytes = Convert.FromBase64String(dataUrl[(comma + 1)..]);
+        Session.Stars!.Edited = PreviewRenderer.DecodeImage(bytes);
+        _cloneOpen = false;
+        ComposeStarPreview();
+    }
+
     // --------------------------------------------------------- export ----
     void OpenExport()
     {
@@ -495,7 +613,7 @@
                 _exportStage = v < 0.78 ? "a processar…" : "a gravar ficheiros…";
                 InvokeAsync(StateHasChanged);
             });
-            var result = await ExportService.ExportAsync(Session.LinearFull!, prm, _exportPrefix, progress);
+            var result = await ExportService.ExportAsync(Session.LinearFull!, prm, _exportPrefix, progress, Session.Stars);
             _exportFolder = result.Folder;
             _exportDone = true;
         }

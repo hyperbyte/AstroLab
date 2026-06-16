@@ -239,6 +239,10 @@ h3 {
     display: flex;
 }
 .inspector-scroll img { display: block; margin: auto; image-rendering: pixelated; }
+.clone-toolbar { display: flex; align-items: center; gap: .8rem; margin-bottom: .6rem; flex-wrap: wrap; }
+.clone-toolbar label { font-size: .8rem; display: flex; align-items: center; gap: .4rem; }
+.clone-canvas { display: block; max-width: 100%; height: auto; margin: auto; cursor: crosshair; touch-action: none; }
+.star-mode { margin-top: .5rem; }
 .modal-narrow .path-input { margin-top: .3rem; }
 .modal code { background: var(--bg-2); padding: 0 .2rem; border-radius: 3px; }
 .modal-head {

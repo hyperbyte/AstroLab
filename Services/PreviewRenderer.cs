@@ -30,6 +30,18 @@ public static class PreviewRenderer
     /// Fase B (stretch arcsinh+MTF+blackpoint, SCNR, saturação+curva) sobre uma
     /// CÓPIA do proxy, encode JPEG. Ordem = Python (stretch→scnr→saturação), sem NR.
     /// </summary>
+    /// <summary>Redimensiona RGB float (interp. linear) — para escalar a correção
+    /// de clone do proxy para o full-res no export.</summary>
+    public static float[] ResizeRGB(LinearImage src, int w, int h)
+    {
+        using var m = src.AsMat();
+        using var dst = new Mat();
+        Cv2.Resize(m, dst, new Size(w, h), 0, 0, InterpolationFlags.Linear);
+        var data = new float[(long)w * h * 3];
+        System.Runtime.InteropServices.Marshal.Copy(dst.Data, data, 0, data.Length);
+        return data;
+    }
+
     public static byte[] Render(LinearImage proxy, ToneParams p, int jpegQuality = 85)
     {
         var work = proxy.Clone();
@@ -105,6 +117,18 @@ public static class PreviewRenderer
         return EncodeJpeg(img, 90);
     }
 
+    /// <summary>Aplica a Fase B a uma cópia e devolve a imagem (não codifica).
+    /// Usado para alimentar a separação de estrelas com a imagem esticada.</summary>
+    public static LinearImage ToneToImage(LinearImage src, ToneParams p, bool withNr)
+    {
+        var work = src.Clone();
+        ApplyTone(work, p, withNr);
+        return work;
+    }
+
+    /// <summary>Codifica uma LinearImage já processada (RGB 0–1) em JPEG.</summary>
+    public static byte[] EncodeImage(LinearImage img, int quality = 85) => EncodeJpeg(img, quality);
+
     /// <summary>Fase B in-place. withNr insere o Denoise entre SCNR e saturação
     /// (ordem do Python: stretch→scnr→denoise→saturação).</summary>
     static void ApplyTone(LinearImage work, ToneParams p, bool withNr)
@@ -115,6 +139,27 @@ public static class PreviewRenderer
         if (p.ComaCorrect) AstroPipeline.ComaCorrect(work);
         AstroPipeline.SaturationAndCurve(work, p.Saturation);
         if (p.AiSharpen) AiSharpen.Sharpen(work, 1.0);   // deconvolução IA (subtil no proxy)
+    }
+
+    /// <summary>Descodifica um JPEG/PNG (bytes) para LinearImage RGB 0–1.
+    /// Usado para reler o resultado do clone stamp vindo do canvas.</summary>
+    public static LinearImage DecodeImage(byte[] data)
+    {
+        using var src = Cv2.ImDecode(data, ImreadModes.Color);   // BGR 8U
+        int w = src.Width, h = src.Height, n = w * h;
+        using var f = new Mat();
+        src.ConvertTo(f, MatType.CV_32F, 1.0 / 255);
+        Mat[] ch = Cv2.Split(f);                                  // BGR
+        try
+        {
+            ch[2].GetArray(out float[] r);
+            ch[1].GetArray(out float[] g);
+            ch[0].GetArray(out float[] b);
+            var d = new float[(long)n * 3];
+            for (int i = 0; i < n; i++) { d[i * 3] = r[i]; d[i * 3 + 1] = g[i]; d[i * 3 + 2] = b[i]; }
+            return new LinearImage { Width = w, Height = h, Data = d };
+        }
+        finally { foreach (var m in ch) m.Dispose(); }
     }
 
     public static byte[] EncodeJpeg(LinearImage img, int quality)

@@ -44,6 +44,10 @@ public static class SelfTest
                     if (args.Length < 2) throw new ArgumentException("uso: aitest <path>");
                     AiTest(args[1]);
                     break;
+                case "startest":  // debug: separação de estrelas (starless + stars)
+                    if (args.Length < 2) throw new ArgumentException("uso: startest <path>");
+                    StarTest(args[1]);
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -174,6 +178,33 @@ public static class SelfTest
         Console.WriteLine($"  AiSharpen {cw}x{ch}: {sw.ElapsedMilliseconds} ms");
         File.WriteAllBytes("testdata/corner_ai.jpg", PreviewRenderer.EncodeJpeg(crop, 95));
         Console.WriteLine("  testdata/corner_ai.jpg");
+    }
+
+    static void StarTest(string path)
+    {
+        var img = TiffIO.LoadFloat(path);
+        AstroPipeline.Normalize(img);
+        img = AstroPipeline.Crop(img, 0.012);
+        AstroPipeline.ExtractBackground(img, radial: true);
+        AstroPipeline.ColorCalibrate(img);
+        var p = ToneParams.Defaults;
+        AstroPipeline.Stretch(img, p);
+        AstroPipeline.Scnr(img, p.Scnr);
+        AstroPipeline.SaturationAndCurve(img, p.Saturation);
+
+        const int w = 1280, h = 960;
+        int x0 = (img.Width - w) / 2, y0 = (img.Height - h) / 2;
+        var crop = new LinearImage { Width = w, Height = h, Data = new float[w * h * 3] };
+        for (int y = 0; y < h; y++)
+            Array.Copy(img.Data, ((y0 + y) * img.Width + x0) * 3, crop.Data, y * w * 3, w * 3);
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var starless = StarRemoval.Starless(crop);
+        sw.Stop();
+        var stars = StarRemoval.StarsLayer(crop, starless);
+        File.WriteAllBytes("testdata/cs_starless.jpg", PreviewRenderer.EncodeJpeg(starless, 95));
+        File.WriteAllBytes("testdata/cs_stars.jpg", PreviewRenderer.EncodeJpeg(stars, 95));
+        Console.WriteLine($"  Starless {w}x{h}: {sw.ElapsedMilliseconds} ms -> testdata/cs_starless.jpg, cs_stars.jpg");
     }
 
     static void Bench(string path)
