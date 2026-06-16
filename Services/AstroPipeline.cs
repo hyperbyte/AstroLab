@@ -467,26 +467,36 @@ public static class AstroPipeline
         return (lo + hi) / 2f;
     }
 
-    /// <summary>Quickselect (Lomuto + mediana-de-três). Reordena a[left..right]
-    /// tal que a[k] = k-ésimo menor; [left..k-1] ≤ a[k] ≤ [k+1..right].</summary>
+    /// <summary>Quickselect com partição de 3 vias (Dutch national flag) +
+    /// pivot mediana-de-três. Reordena a[left..right] tal que a[k] = k-ésimo menor;
+    /// [left..k-1] ≤ a[k]. O bloco "== pivot" garante O(n) mesmo com MUITOS valores
+    /// iguais (campo escuro pós-background) — onde o Lomuto simples degrada para O(n²).</summary>
     static float QuickSelect(float[] a, int left, int right, int k)
     {
-        while (left < right)
+        while (true)
         {
+            if (left >= right) return a[left];
             int mid = left + ((right - left) >> 1);
-            if (a[mid] < a[left]) (a[left], a[mid]) = (a[mid], a[left]);
-            if (a[right] < a[left]) (a[left], a[right]) = (a[right], a[left]);
-            if (a[right] < a[mid]) (a[mid], a[right]) = (a[right], a[mid]);
-            float pivot = a[mid];
-            (a[mid], a[right]) = (a[right], a[mid]);   // pivot → fim
-            int store = left;
-            for (int i = left; i < right; i++)
-                if (a[i] < pivot) { (a[i], a[store]) = (a[store], a[i]); store++; }
-            (a[store], a[right]) = (a[right], a[store]);
-            if (k == store) return a[k];
-            if (k < store) right = store - 1; else left = store + 1;
+            float pivot = MedianOf3(a[left], a[mid], a[right]);
+            int lt = left, gt = right, i = left;
+            while (i <= gt)
+            {
+                float v = a[i];
+                if (v < pivot) { (a[lt], a[i]) = (a[i], a[lt]); lt++; i++; }
+                else if (v > pivot) { (a[gt], a[i]) = (a[i], a[gt]); gt--; }
+                else i++;
+            }
+            // [left..lt-1] < pivot ; [lt..gt] == pivot ; [gt+1..right] > pivot
+            if (k < lt) right = lt - 1;
+            else if (k > gt) left = gt + 1;
+            else return pivot;            // k cai no bloco dos iguais
         }
-        return a[left];
+    }
+
+    static float MedianOf3(float a, float b, float c)
+    {
+        if (a < b) return b < c ? b : (a < c ? c : a);
+        return a < c ? a : (b < c ? c : b);
     }
 
     /// <summary>Percentil com interpolação linear (= np.percentile default).
