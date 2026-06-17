@@ -57,6 +57,9 @@ public static class SelfTest
                 case "starproc":
                     StarProc();
                     break;
+                case "reducestars":
+                    ReduceStarsTest();
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -394,5 +397,40 @@ public static class SelfTest
         if (diff <= 0) throw new Exception("LocalContrast 0.8 não alterou nada");
 
         Console.WriteLine($"  no-op OK; soma|Δ|={diff:F2} -> OK");
+    }
+
+    static LinearImage MakeStarField(int w, int h)
+    {
+        var data = new float[w * h * 3];                 // fundo preto
+        (int cx, int cy)[] stars = { (60, 60), (180, 90), (120, 200) };
+        foreach (var (cx, cy) in stars)
+            for (int y = -6; y <= 6; y++)
+                for (int x = -6; x <= 6; x++)
+                {
+                    int px = cx + x, py = cy + y;
+                    if (px < 0 || py < 0 || px >= w || py >= h) continue;
+                    if (x * x + y * y > 36) continue;     // disco r=6
+                    int i = (py * w + px) * 3;
+                    data[i] = data[i + 1] = data[i + 2] = 0.9f;
+                }
+        return new LinearImage { Width = w, Height = h, Data = data };
+    }
+
+    static void ReduceStarsTest()
+    {
+        Console.WriteLine("== Redução de estrelas (no-op + encolhe) ==");
+        var stars = MakeStarField(256, 256);
+
+        var r0 = StarRemoval.ReduceStars(stars, 0);
+        for (int i = 0; i < r0.Data.Length; i++)
+            if (r0.Data[i] != stars.Data[i])
+                throw new Exception("amount 0 não é no-op");
+
+        var r1 = StarRemoval.ReduceStars(stars, 1);
+        double s0 = 0, s1 = 0;
+        for (int i = 0; i < stars.Data.Length; i++) { s0 += stars.Data[i]; s1 += r1.Data[i]; }
+        if (s1 >= s0) throw new Exception($"erosão não reduziu energia: {s1:F1} >= {s0:F1}");
+
+        Console.WriteLine($"  no-op OK; soma estrelas {s0:F0} -> {s1:F0} (menor) -> OK");
     }
 }

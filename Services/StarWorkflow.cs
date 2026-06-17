@@ -16,6 +16,8 @@ public sealed class StarWorkflow
     public double Gain = 1.0;        // ganho do fundo (multiplicativo)
     public double Saturation = 1.0;  // saturação do fundo
     public double LocalContrast = 0;  // contraste local do fundo (unsharp raio grande)
+    public double StarReduction = 0;     // redução de estrelas (erosão), 0–1
+    public double StarSaturation = 1.0;  // saturação da camada de estrelas
 
     /// <summary>Fundo a usar (editado se existir, senão o original).</summary>
     public LinearImage BackgroundBase => Edited ?? Starless;
@@ -26,7 +28,7 @@ public sealed class StarWorkflow
     {
         var bg = BackgroundBase.Clone();
         ProcessBackground(bg);
-        return StarRemoval.Screen(bg, Stars);
+        return StarRemoval.Screen(bg, ProcessStars(Stars));
     }
 
     /// <summary>Aplica a um starless FULL-RES a correção de clone (diferença do proxy,
@@ -69,5 +71,14 @@ public sealed class StarWorkflow
     {
         AdjustBackground(img, Gain, Saturation);
         AstroPipeline.LocalContrast(img, LocalContrast);
+    }
+
+    /// <summary>Processa as ESTRELAS: redução (erosão) + saturação. Devolve nova imagem
+    /// (não muta o input). Partilhado entre preview e export.</summary>
+    public LinearImage ProcessStars(LinearImage stars)
+    {
+        var s = StarRemoval.ReduceStars(stars, StarReduction);
+        AdjustBackground(s, 1.0, StarSaturation);
+        return s;
     }
 }
