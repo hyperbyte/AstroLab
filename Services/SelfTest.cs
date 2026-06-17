@@ -64,6 +64,9 @@ public static class SelfTest
                     if (args.Length < 2) throw new ArgumentException("uso: abtest <path>");
                     AbTest(args[1]);
                     break;
+                case "wcstest":
+                    WcsTest();
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -498,5 +501,33 @@ public static class SelfTest
         if (s1 >= s0) throw new Exception($"erosão não reduziu energia: {s1:F1} >= {s0:F1}");
 
         Console.WriteLine($"  no-op OK; soma estrelas {s0:F0} -> {s1:F0} (menor) -> OK");
+    }
+
+    static void WcsTest()
+    {
+        Console.WriteLine("== WcsSolution (parse + projeção TAN) ==");
+        const string header =
+            "CTYPE1  = 'RA---TAN'\nCTYPE2  = 'DEC--TAN'\n" +
+            "CRPIX1  =  3.057500000000E+003\nCRPIX2  =  2.040500000000E+003\n" +
+            "CRVAL1  =  2.458169582032E+002\nCRVAL2  = -2.495790306081E+001\n" +
+            "CD1_1   = -1.835458761921E-004\nCD1_2   =  1.318058558158E-003\n" +
+            "CD2_1   =  1.319524801447E-003\nCD2_2   =  1.846106534218E-004\nPLTSOLVD=T\n";
+
+        var w = WcsSolution.Parse(header) ?? throw new Exception("Parse devolveu null");
+
+        // o pixel de referência projeta-se para si próprio
+        var (px, py) = w.WorldToPixel(245.8169582032, -24.9579030608);
+        if (Math.Abs(px - 3057.5) > 0.01 || Math.Abs(py - 2040.5) > 0.01)
+            throw new Exception($"WorldToPixel(CRVAL) = ({px:F3},{py:F3}), esperado (3057.5,2040.5)");
+
+        // round-trip pixel -> world -> pixel
+        var (ra, dec) = w.PixelToWorld(1000, 1500);
+        var (rx, ry) = w.WorldToPixel(ra, dec);
+        if (Math.Abs(rx - 1000) > 0.01 || Math.Abs(ry - 1500) > 0.01)
+            throw new Exception($"round-trip falhou: ({rx:F3},{ry:F3}) != (1000,1500)");
+
+        Console.WriteLine($"  centro = {w.CenterRaDeg:F4}, {w.CenterDecDeg:F4}");
+        Console.WriteLine($"  escala = {w.ScaleArcsecPerPixel:F3} arcsec/px, orientação = {w.OrientationDeg:F2}°");
+        Console.WriteLine("  WorldToPixel(CRVAL)≈CRPIX OK; round-trip OK");
     }
 }
