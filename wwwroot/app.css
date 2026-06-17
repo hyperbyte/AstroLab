@@ -284,3 +284,7 @@ h3 {
     z-index: 1000;
 }
 #blazor-error-ui .dismiss { cursor: pointer; position: absolute; right: .75rem; top: .5rem; }
+
+/* ------------------------------------------------- solve card ---- */
+.solve-card { margin-top:.6rem; padding:.5rem .6rem; background:#1a1a22; border-radius:6px;
+    font-size:.8rem; line-height:1.5; color:var(--text); }
