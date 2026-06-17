@@ -67,6 +67,9 @@ public static class SelfTest
                 case "wcstest":
                     WcsTest();
                     break;
+                case "fovtest":
+                    FovTest();
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -529,5 +532,18 @@ public static class SelfTest
         Console.WriteLine($"  centro = {w.CenterRaDeg:F4}, {w.CenterDecDeg:F4}");
         Console.WriteLine($"  escala = {w.ScaleArcsecPerPixel:F3} arcsec/px, orientação = {w.OrientationDeg:F2}°");
         Console.WriteLine("  WorldToPixel(CRVAL)≈CRPIX OK; round-trip OK");
+    }
+
+    static void FovTest()
+    {
+        Console.WriteLine("== PlateSolve.FovHeightDeg + FindAstap ==");
+        // RedCat 51 (≈247mm efetiva) + Canon RP (5.74µm), altura 4080 px ≈ 5.5°
+        double fov = PlateSolve.FovHeightDeg(247.0, 5.74, 4080);
+        if (fov < 5.0 || fov > 6.0)
+            throw new Exception($"FOV {fov:F2}° fora do esperado (~5.5°)");
+        // inputs inválidos → 0 (modo auto)
+        if (PlateSolve.FovHeightDeg(0, 5.74, 4080) != 0)
+            throw new Exception("focal 0 devia dar FOV 0 (auto)");
+        Console.WriteLine($"  FOV(247mm,5.74µm,4080px) = {fov:F2}° ; astap = {PlateSolve.FindAstap(null) ?? "(não encontrado)"}");
     }
 }
