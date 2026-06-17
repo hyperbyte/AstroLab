@@ -308,6 +308,27 @@
     </div>
 }
 
+@if (_drizzleOpen)
+{
+    <div class="modal-backdrop" @onclick="@(() => _drizzleOpen = false)">
+        <div class="modal modal-narrow" @onclick:stopPropagation="true">
+            <div class="modal-head">
+                <span>Drizzle / Resample</span>
+                <button class="slider-reset" @onclick="@(() => _drizzleOpen = false)">🗙</button>
+            </div>
+            <div class="slider-note">
+                Foi aplicado drizzle no empilhamento? Imagens drizzladas ou sobreamostradas
+                (incl. de fontes não-DSLR) são reduzidas antes do processamento para recuperar SNR.
+            </div>
+            <div class="open-row" style="margin-top:.8rem">
+                <button class="btn" @onclick="@(() => ConfirmDrizzle(1))">Nenhum</button>
+                <button class="btn" @onclick="@(() => ConfirmDrizzle(2))">2×</button>
+                <button class="btn" @onclick="@(() => ConfirmDrizzle(3))">3×</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     string _path = "";
     bool _radial = true;        // termos radiais no background (Fase A)
@@ -327,6 +348,8 @@
     bool _tone => _ready && Session.Stars is null;
     string? _error;
     int _ver;                   // versão de render p/ descartar obsoletos
+
+    bool _drizzleOpen;
 
     // --- preview de NR ---
     ElementReference _previewImg;
@@ -394,8 +417,15 @@
     {
         _error = null;
         if (!File.Exists(_path)) { _error = "Ficheiro não encontrado."; return; }
+        _drizzleOpen = true;                 // pergunta o drizzle antes de correr a Fase A
+        await InvokeAsync(StateHasChanged);
+    }
 
+    async Task ConfirmDrizzle(int factor)
+    {
+        _drizzleOpen = false;
         Session.Radial = _radial;
+        Session.DrizzleFactor = factor;
         await RunPhaseA(() => Session.OpenAsync(_path, MakeProgress()), () =>
         {
             RecentFiles.Add(_path);
