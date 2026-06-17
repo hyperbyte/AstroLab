@@ -73,6 +73,10 @@ public static class SelfTest
                 case "settingstest":
                     SettingsTest();
                     break;
+                case "solvetest":
+                    if (args.Length < 2) throw new ArgumentException("uso: solvetest <path>");
+                    SolveTest(args[1]);
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -561,5 +565,23 @@ public static class SelfTest
             throw new Exception($"persistência falhou: {s2.FocalLengthMm}/{s2.PixelSizeUm}");
         s.FocalLengthMm = origFocal; s.Save();   // restaurar
         Console.WriteLine("  guardou e releu focal/píxel OK");
+    }
+
+    static void SolveTest(string path)
+    {
+        Console.WriteLine($"== Plate solve end-to-end: {path} ==");
+        var img = TiffIO.LoadFloat(path);
+        AstroPipeline.Normalize(img);
+        img = AstroPipeline.Crop(img, 0.012);
+        AstroPipeline.ExtractBackground(img, radial: true);
+        AstroPipeline.ColorCalibrate(img);
+
+        var sw = Stopwatch.StartNew();
+        bool ok = PlateSolve.TrySolve(img, null, 247.0, 5.74, out var wcs, out var status);
+        sw.Stop();
+        Console.WriteLine($"  {status} em {sw.ElapsedMilliseconds} ms");
+        if (!ok || wcs is null) throw new Exception($"solve falhou: {status}");
+        Console.WriteLine($"  centro = {wcs.CenterRaDeg:F4}, {wcs.CenterDecDeg:F4}");
+        Console.WriteLine($"  escala = {wcs.ScaleArcsecPerPixel:F2}\"/px · FOV {wcs.FovWidthDeg(img.Width):F1}×{wcs.FovHeightDeg(img.Height):F1}° · orient {wcs.OrientationDeg:F1}°");
     }
 }
