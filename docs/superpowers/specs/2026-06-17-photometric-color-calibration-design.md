@@ -1,148 +1,181 @@
-# Design — Calibração fotométrica de cor (PCC) com plate solve (ASTAP)
+# Design — Plate solve (ASTAP): calibração fotométrica de cor (PCC) + anotação de campo
 
 Data: 2026-06-17
 
 ## Contexto e objetivo
 
-O `ColorCalibrate` atual ([AstroPipeline.cs](../../../Services/AstroPipeline.cs)) faz white-balance
-por halos de estrela não saturados — funciona, mas não é fotométrico (sem
-coordenadas, sem catálogo) e deriva em campos pobres em estrelas. Este projeto
-adiciona **calibração fotométrica de cor (PCC)**: resolve a placa (plate solve)
-para obter coordenadas, obtém estrelas de catálogo com cor conhecida (Gaia
-BP-RP), mede-as na imagem e ajusta os canais para a cor física bater certo.
+O `ColorCalibrate` atual ([AstroPipeline.cs](../../../Services/AstroPipeline.cs)) faz
+white-balance por halos de estrela — funciona, mas não é fotométrico (sem
+coordenadas, sem catálogo) e deriva em campos pobres em estrelas.
 
-É um **subsistema novo e opcional**; quando desligado ou em falha, o pipeline
-mantém exatamente o comportamento atual.
+Este projeto adiciona **plate solve** (resolver as coordenadas da imagem com o
+ASTAP) como capacidade base, e **dois consumidores** independentes da solução:
+
+1. **PCC** — calibração fotométrica de cor: mede estrelas de catálogo (Gaia
+   BP-RP) na imagem e ajusta os canais para a cor física bater certo.
+2. **Anotação de campo** — overlay no preview: objetos de céu profundo, grelha
+   de coordenadas, estrelas nomeadas e um cartão com a info do solve.
+
+Tudo **opcional**; desligado ou em falha, o pipeline mantém o comportamento atual.
 
 ## Decisões (fechadas no brainstorm)
 
-1. **Solver:** ASTAP local, invocado por subprocess (mesmo padrão do
-   `NativeFileDialog`). Offline e privado.
-2. **Fotometria:** base Gaia do ASTAP (offline). Mecanismo exato de extração das
-   estrelas+BP-RP **a confirmar num spike**; fallback = query online Gaia/Vizier.
-3. **Dependência:** assumir ASTAP+DB instalados. Auto-detetar; se faltarem, a app
-   aponta o utilizador (instruções/link). Não descarrega nem empacota nada.
-4. **Falha:** fallback ao `ColorCalibrate` por halos + nota de estado a explicar.
-   Nunca bloqueia a Fase A.
-5. **Escala/FOV:** calculada de **distância focal efetiva (mm)** + **tamanho de
-   píxel (µm)** + dimensões da imagem, passada ao ASTAP como hint (`-fov`).
-6. **Campos focal/píxel:** dois inputs na secção "Cor", pré-preenchidos por
-   metadata (best-effort) → últimos valores memorizados → vazio. Persistidos.
+1. **Solver:** ASTAP local, por subprocess (padrão do `NativeFileDialog`). Offline.
+2. **Plate solve desacoplado da PCC:** o solve corre uma vez e guarda uma
+   `WcsSolution` na sessão; PCC e anotação consomem-na independentemente.
+3. **Fotometria (PCC):** base Gaia do ASTAP (offline); mecanismo de extração a
+   confirmar num **spike**; fallback = query online Gaia/Vizier.
+4. **Dependência:** assumir ASTAP+DB instalados. Auto-detetar; se faltarem,
+   apontar o utilizador. Não descarrega nem empacota o ASTAP.
+5. **Falha:** PCC → fallback ao `ColorCalibrate` + nota; anotação → não mostra
+   overlay + nota. Nunca bloqueia a Fase A.
+6. **Escala/FOV:** de **distância focal efetiva (mm)** + **tamanho de píxel (µm)**
+   + dimensões da imagem, passada ao ASTAP como hint (`-fov`).
+7. **Campos focal/píxel:** dois inputs persistidos, pré-preenchidos por metadata
+   (best-effort) → últimos valores → vazio.
+8. **Overlay mostra:** DSO (Messier/NGC/IC), grelha RA/Dec, estrelas nomeadas e
+   cartão de info (centro/escala/orientação/FOV).
+9. **Catálogos de anotação:** CSVs compactos embebidos (públicos: OpenNGC para
+   DSO + lista de estrelas nomeadas IAU). Offline, sem licença problemática.
 
 ## Arquitetura
 
-### Novo serviço: `Services/PhotometricCalibration.cs`
-
-Fronteira única:
+### Capacidade base — `Services/PlateSolve.cs`
 ```csharp
-public static bool TryCalibrate(LinearImage img, PccSettings s, out string status);
+public static bool TrySolve(LinearImage img, SolveSettings s,
+                            out WcsSolution? wcs, out string status);
 ```
-- Aplica a calibração **in-place** e devolve `true` em sucesso; `false` em
-  qualquer falha (`status` explica). **Nunca lança** para fora — o
-  `ProcessingSession` decide o fallback.
-- `PccSettings`: `AstapPath` (auto-detetado ou configurado), `FocalLengthMm`,
-  `PixelSizeUm`, `MinStars` (default 20), `ApertureRadiusPx`.
+- Render temporário **auto-esticado** (luminância) porque o ASTAP precisa de
+  estrelas visíveis, não dados lineares.
+- Subprocess `astap.exe -f <tmp> -fov <graus> -wcs` (FOV do hint; sem hint → auto).
+  Timeout. Parse do `.wcs`/`.ini` (CRVAL1/2 + matriz CD).
+- **Nunca lança**; devolve `false` + `status` em falha.
+- `SolveSettings`: `AstapPath`, `FocalLengthMm`, `PixelSizeUm`.
 
-Etapas privadas, cada uma testável isoladamente:
-1. **Localizar ASTAP+DB** — PATH, dirs comuns (`C:\Program Files\astap\astap.exe`),
-   ou `AstapPath`. DB junto ao exe.
-2. **Imagem de solve** — render temporário **auto-esticado** (luminância,
-   PNG/TIFF 16-bit) porque o ASTAP precisa de estrelas visíveis, não dados
-   lineares.
-3. **Solve** — subprocess `astap.exe -f <tmp> -fov <graus> -wcs` (FOV do hint;
-   sem hint válido → modo auto). Timeout. Parse do `.wcs`/`.ini` (CRVAL1/2 +
-   matriz CD) → solução.
-4. **Catálogo (estrelas + BP-RP no FOV)** — primário: base Gaia do ASTAP
-   (mecanismo do spike); fallback: cone search online Gaia/Vizier.
-5. **Medição** — projetar estrelas do catálogo para píxeis via WCS; somar fluxo
-   por canal (R,G,B) na imagem **linear** (abertura `ApertureRadiusPx`),
-   rejeitando saturadas/coladas/de bordo.
-6. **Ajuste** — ganhos por canal para a cor medida bater com a esperada
-   (catálogo BP-RP, normalizada ao G) → aplicar à imagem linear (mesma forma de
-   saída do `ColorCalibrate`).
+### `WcsSolution` (objeto partilhado)
+Centro RA/Dec, matriz CD/escala, rotação (ângulo de posição), dimensões. Métodos:
+```csharp
+(double x, double y) WorldToPixel(double ra, double dec);   // anotação + PCC
+(double ra, double dec) PixelToWorld(double x, double y);   // grelha/cartão
+```
+Projeção partilhada entre os dois consumidores.
+
+### Consumidor 1 — `Services/PhotometricCalibration.cs`
+```csharp
+public static bool TryCalibrate(LinearImage img, WcsSolution wcs,
+                                PhotSettings s, out string status);
+```
+Catálogo (estrelas+BP-RP no FOV) → projetar via `WorldToPixel` → medir fluxo por
+canal na imagem **linear** (abertura, rejeitar saturadas/coladas/bordo) → ganhos
+por canal (cor medida → esperada, normalizada ao G) → aplicar in-place.
+Catálogo primário = base Gaia do ASTAP (spike); fallback = online Gaia/Vizier.
+
+### Consumidor 2 — `Services/FieldAnnotation.cs`
+```csharp
+public static AnnotationOverlay Build(WcsSolution wcs, AnnotationCatalogs cat);
+```
+Dado o WCS + catálogos embebidos, devolve itens de overlay com coordenadas em
+**fração 0–1** da imagem (escalam com o tamanho mostrado):
+- **DSO** no campo: marcador + etiqueta (nome, tipo).
+- **Grelha RA/Dec:** polilinhas projetadas + rótulos.
+- **Estrelas nomeadas** no campo: marca + nome.
+- **Cartão de info:** RA/Dec do centro, escala (arcsec/px), orientação, FOV.
+
+Não toca nos píxeis — é dados para a UI desenhar.
 
 ### Escala / FOV
-
 ```
 escala_arcsec_px = 206.265 × PixelSizeUm ÷ FocalLengthMm
 FOV_altura_graus  = escala_arcsec_px × altura_px ÷ 3600
 ```
-O FOV angular não muda com o resample de drizzle (só muda a contagem de píxeis);
-usamos as dimensões da imagem apresentada ao ASTAP. Sem focal/píxel válidos, o
-solve cai em modo auto.
+O FOV angular não muda com o resample de drizzle; usamos as dimensões da imagem
+apresentada. Sem focal/píxel válidos → solve em modo auto.
 
 ## Integração na Fase A (`ProcessingSession`)
 
-Novas propriedades: `Pcc` (bool, default `false`), `PccStatus` (string p/ UI),
-`FocalLengthMm`, `PixelSizeUm`. O passo de cor passa a:
+Novas propriedades: `Pcc` (bool), `ShowAnnotation` (bool), `Wcs` (WcsSolution?),
+`SolveStatus`/`PccStatus` (strings), `FocalLengthMm`, `PixelSizeUm`, `AstapPath`.
+
+Na `RunPhaseA`, após a geometria estar fixa (pós crop/resample):
 ```csharp
-if (Pcc && PhotometricCalibration.TryCalibrate(img, settings, out var status))
-    PccStatus = status;                       // ex.: "PCC ok — 137 estrelas"
-else {
-    if (Pcc) PccStatus = status;              // ex.: "ASTAP não encontrado — usei halos"
-    AstroPipeline.ColorCalibrate(img);        // fallback (método atual)
+Wcs = null;
+if (Pcc || ShowAnnotation)
+{
+    if (PlateSolve.TrySolve(img, solveSettings, out var wcs, out var st)) Wcs = wcs;
+    SolveStatus = st;
 }
+// cor:
+if (Pcc && Wcs != null && PhotometricCalibration.TryCalibrate(img, Wcs, photSettings, out var ps))
+    PccStatus = ps;
+else { if (Pcc) PccStatus = /* motivo */; AstroPipeline.ColorCalibrate(img); }
 ```
-O toggle dispara reprocess (como `Radial`/`LinearDenoise`). Nunca bloqueia.
+O solve é **caro mas corre 1× na Fase A** (reprocess). O overlay de anotação é
+construído do `Wcs` cacheado e **liga/desliga sem reprocess** (puro UI).
 
 ## Persistência
+Focal/píxel e `AstapPath` num ficheiro de settings (padrão do `RecentFiles`).
+Pré-preenchimento: metadata (EXIF `FocalLength`/`FocalPlaneXResolution`,
+best-effort) → últimos valores → vazio.
 
-Focal/píxel e o `AstapPath` guardados num pequeno ficheiro de settings (padrão do
-`RecentFiles`). Pré-preenchimento: metadata da imagem (best-effort via EXIF —
-`FocalLength`, `FocalPlaneXResolution`) → últimos valores → vazio.
-
-> Nota honesta: o `Autosave.tif` do DSS raramente preserva EXIF, por isso o caso
-> comum é virem dos últimos valores e o utilizador confirmar.
+> Nota honesta: o `Autosave.tif` do DSS raramente preserva EXIF; o caso comum é
+> virem dos últimos valores e o utilizador confirmar.
 
 ## UI
 
-Secção "Cor" nos controlos:
-- Checkbox **"Calibração fotométrica (PCC — ASTAP)"** (disabled durante busy).
-- **Distância focal efetiva (mm)** e **Tamanho de píxel (µm)** — pré-preenchidos,
-  editáveis, persistidos.
-- Campo opcional **caminho do `astap.exe`** (se a auto-deteção falhar).
-- Nota de estado (`PccStatus`): sucesso+nº estrelas, ou motivo da falha.
+Secção "Cor":
+- Checkbox **"Calibração fotométrica (PCC — ASTAP)"**.
+- **Distância focal efetiva (mm)** e **Tamanho de píxel (µm)** (persistidos).
+- Campo opcional **caminho do `astap.exe`**.
+- Nota de estado (`SolveStatus`/`PccStatus`).
 
-Sem overlay/anotação do campo resolvido (fora de scope).
+Secção "Anotação":
+- Checkbox **"Mostrar anotação de campo"** + sub-toggles (DSO, grelha, estrelas,
+  cartão) para ligar cada camada.
+- Overlay desenhado **por cima do `<img>` do preview** (SVG com coordenadas em %,
+  escala com o tamanho mostrado). Não interfere com os sliders de tone.
 
-## Erros (todos → fallback + status, nunca lançam)
-
-- Sem `astap.exe`/DB → "ASTAP não encontrado".
+## Erros (todos → degradam, nunca lançam)
+- Sem `astap.exe`/DB → "ASTAP não encontrado"; PCC usa halos, anotação não mostra.
 - Solve falha/timeout → "solve falhou".
-- < `MinStars` casadas → "poucas estrelas".
+- PCC com < `MinStars` casadas → "poucas estrelas" + fallback halos.
 - Sem fotometria offline e sem internet → "sem catálogo".
 
 ## Testes
 
-- **Spike (primeiro, de-risca a fotometria):** confirmar como obter estrelas +
-  BP-RP offline do ASTAP (CLI vs ler a DB); se inviável, ativar o fallback online.
-  Decide o resto da implementação.
-- **`SelfTest pcctest <path>`:** corre a PCC no `Autosave.tif`, imprime RA/Dec/FOV,
-  nº de estrelas e ganhos por canal, e escreve A/B (PCC vs halos).
-- **Parse de WCS:** testado com um `.wcs` determinístico (sem ASTAP).
-- **Medição de fluxo:** testada com estrelas sintéticas de cor conhecida.
-- Nota honesta: o end-to-end exige ASTAP instalado na máquina de dev; o spike
-  valida isso logo.
+- **Spike (primeiro):** confirmar extração offline de estrelas+BP-RP do ASTAP
+  (CLI vs ler a DB); senão, ativar fallback online. Decide o resto.
+- **`WcsSolution`:** round-trip `WorldToPixel`/`PixelToWorld` com WCS determinístico
+  (sem ASTAP); objeto conhecido no FOV projeta na fração esperada.
+- **`SelfTest solvetest <path>`:** corre solve no `Autosave.tif`, imprime RA/Dec/
+  escala/FOV, lista DSO no campo, e grava uma imagem com o overlay "queimado" para
+  inspeção visual.
+- **`SelfTest pcctest <path>`:** PCC vs halos (A/B) + nº estrelas e ganhos.
+- Nota honesta: o end-to-end exige ASTAP instalado; o spike valida logo.
+
+## Decomposição sugerida (para o plano)
+Três entregáveis independentes, todos sobre o `PlateSolve`:
+1. **Plate solve + WcsSolution + cartão de info** (a anotação mais barata).
+2. **PCC** (cor) — consome o WCS.
+3. **Overlay completo** (DSO, grelha, estrelas) — consome o WCS.
 
 ## Fora de scope (YAGNI)
-
-- Anotação/overlay do campo resolvido.
-- Catálogo online como caminho primário (só fallback).
-- Solver online (astrometry.net).
-- Suporte a outros solvers além do ASTAP.
+- Catálogo online como caminho primário (só fallback de PCC).
+- Solver online (astrometry.net) ou outros solvers além do ASTAP.
+- Edição/medição interativa sobre o overlay (é só visualização).
 
 ## Critérios de sucesso
-
-1. PCC off → resultado idêntico ao atual (fallback `ColorCalibrate`).
-2. PCC on, ASTAP ausente → fallback + nota clara; processamento conclui.
-3. PCC on, com ASTAP+DB e focal/píxel corretos → solve com sucesso, ≥20 estrelas,
-   cor visivelmente mais neutra/física que o método por halos (A/B no `pcctest`).
-4. Focal/píxel persistem entre sessões e pré-preenchem.
+1. Tudo off → resultado idêntico ao atual.
+2. PCC on, ASTAP ausente → fallback + nota; processamento conclui.
+3. Solve com ASTAP+DB e focal/píxel corretos → sucesso; PCC dá cor mais neutra
+   que halos (A/B no `pcctest`); overlay coloca DSO conhecidos na posição certa.
+4. Toggle de anotação liga/desliga sem reprocess.
+5. Focal/píxel/AstapPath persistem entre sessões.
 
 ## Ficheiros afetados (previsão)
-
-- Criar: `Services/PhotometricCalibration.cs` (+ parser WCS, settings).
-- Modificar: `Services/ProcessingSession.cs` (props + passo de cor).
-- Modificar: `Services/TiffIO.cs` (leitura best-effort de EXIF focal/píxel).
-- Modificar: `Components/Pages/Editor.razor` (secção Cor: toggle + campos).
-- Modificar: `Services/SelfTest.cs` + `Program.cs` (`pcctest`).
+- Criar: `Services/PlateSolve.cs`, `Services/WcsSolution.cs`,
+  `Services/PhotometricCalibration.cs`, `Services/FieldAnnotation.cs`.
+- Criar: recursos embebidos de catálogo (DSO + estrelas nomeadas) + settings.
+- Modificar: `Services/ProcessingSession.cs`, `Services/TiffIO.cs` (EXIF best-effort).
+- Modificar: `Components/Pages/Editor.razor` (secções Cor + Anotação, overlay SVG)
+  e JS de apoio ao posicionamento do overlay.
+- Modificar: `Services/SelfTest.cs` + `Program.cs` (`solvetest`, `pcctest`).
