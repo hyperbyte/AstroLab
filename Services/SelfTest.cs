@@ -51,6 +51,9 @@ public static class SelfTest
                 case "resample":
                     Resample();
                     break;
+                case "nrlinear":
+                    NrLinear();
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -339,5 +342,34 @@ public static class SelfTest
             throw new Exception($"factor 2: esperado 32x24, obtido {r2.Width}x{r2.Height}");
 
         Console.WriteLine($"  factor1={r1.Width}x{r1.Height} factor2={r2.Width}x{r2.Height} -> OK");
+    }
+
+    static LinearImage MakeNoisy(int w, int h)
+    {
+        var rng = new Random(1);
+        var data = new float[w * h * 3];
+        for (int i = 0; i < data.Length; i++)
+            data[i] = (float)Math.Clamp(0.3 + (rng.NextDouble() - 0.5) * 0.4, 0, 1);
+        return new LinearImage { Width = w, Height = h, Data = data };
+    }
+
+    static void NrLinear()
+    {
+        Console.WriteLine("== NR linear (no-op + efeito) ==");
+        var img = MakeNoisy(128, 96);
+
+        var a = img.Clone();
+        AstroPipeline.DenoiseLinear(a, 0);
+        for (int i = 0; i < a.Data.Length; i++)
+            if (a.Data[i] != img.Data[i])
+                throw new Exception("strength 0 alterou os dados (devia ser no-op)");
+
+        var b = img.Clone();
+        AstroPipeline.DenoiseLinear(b, 1);
+        double diff = 0;
+        for (int i = 0; i < b.Data.Length; i++) diff += Math.Abs(b.Data[i] - img.Data[i]);
+        if (diff <= 0) throw new Exception("strength 1 não alterou nada");
+
+        Console.WriteLine($"  no-op OK; strength1 soma|Δ|={diff:F2} -> OK");
     }
 }

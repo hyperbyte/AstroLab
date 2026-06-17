@@ -19,6 +19,9 @@ public sealed class ProcessingSession
     /// <summary>Fator de drizzle/oversampling; >1 reduz a imagem no início da Fase A. Default 1.</summary>
     public int DrizzleFactor { get; set; } = 1;
 
+    /// <summary>Força de NR linear aplicada na Fase A (pré-stretch). 0 = off. Default 0.</summary>
+    public double LinearDenoise { get; set; } = 0;
+
     /// <summary>Workflow de separação de estrelas (ativo quando != null).</summary>
     public StarWorkflow? Stars { get; set; }
 
@@ -78,6 +81,12 @@ public sealed class ProcessingSession
 
                 progress.Report(("a calibrar cor…", 0.80));
                 AstroPipeline.ColorCalibrate(img);
+
+                if (LinearDenoise > 0)
+                {
+                    progress.Report(("a reduzir ruído (linear)…", 0.88));
+                    AstroPipeline.DenoiseLinear(img, LinearDenoise);
+                }
 
                 progress.Report(("a gerar proxy…", 0.95));
                 LinearFull = img;
