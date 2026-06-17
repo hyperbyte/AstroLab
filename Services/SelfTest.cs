@@ -48,6 +48,22 @@ public static class SelfTest
                     if (args.Length < 2) throw new ArgumentException("uso: startest <path>");
                     StarTest(args[1]);
                     break;
+                case "resample":
+                    Resample();
+                    break;
+                case "nrlinear":
+                    NrLinear();
+                    break;
+                case "starproc":
+                    StarProc();
+                    break;
+                case "reducestars":
+                    ReduceStarsTest();
+                    break;
+                case "abtest":  // comparativos A/B das features novas (NR linear, contraste local, redução estrelas)
+                    if (args.Length < 2) throw new ArgumentException("uso: abtest <path>");
+                    AbTest(args[1]);
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -207,6 +223,68 @@ public static class SelfTest
         Console.WriteLine($"  Starless {w}x{h}: {sw.ElapsedMilliseconds} ms -> testdata/cs_starless.jpg, cs_stars.jpg");
     }
 
+    /// <summary>Comparativos A/B (antes/depois) das 3 features visuais novas, num crop
+    /// central. Escreve pares JPEG em testdata/ab_*.jpg. Tone consistente dentro de cada par.</summary>
+    static void AbTest(string path)
+    {
+        Console.WriteLine($"== A/B das features novas: {path} ==");
+        var img = TiffIO.LoadFloat(path);
+        AstroPipeline.Normalize(img);
+        img = AstroPipeline.Crop(img, 0.012);
+        AstroPipeline.ExtractBackground(img, radial: true);
+        AstroPipeline.ColorCalibrate(img);
+        var p = ToneParams.Defaults;
+
+        const int w = 1280, h = 960;
+        int x0 = (img.Width - w) / 2, y0 = (img.Height - h) / 2;
+        LinearImage CropLin()
+        {
+            var c = new LinearImage { Width = w, Height = h, Data = new float[w * h * 3] };
+            for (int y = 0; y < h; y++)
+                Array.Copy(img.Data, ((long)(y0 + y) * img.Width + x0) * 3, c.Data, (long)y * w * 3, w * 3);
+            return c;
+        }
+
+        // ---- A/B 1: NR linear (pré-stretch). Tone igual nos dois (mid fixo) ----
+        var nrA = CropLin();
+        var nrB = CropLin();
+        AstroPipeline.DenoiseLinear(nrB, 1.0);
+        double mid = AstroPipeline.ComputeMtfMid(nrA, p);   // mesmo midpoint p/ comparação justa
+        foreach (var (img2, tag) in new[] { (nrA, "a_off"), (nrB, "b_on") })
+        {
+            AstroPipeline.Stretch(img2, p, fixedMid: mid);
+            AstroPipeline.Scnr(img2, p.Scnr);
+            AstroPipeline.SaturationAndCurve(img2, p.Saturation);
+            File.WriteAllBytes($"testdata/ab_nrlinear_{tag}.jpg", PreviewRenderer.EncodeJpeg(img2, 92));
+        }
+        Console.WriteLine("  NR linear  -> testdata/ab_nrlinear_a_off.jpg / _b_on.jpg");
+
+        // ---- separação de estrelas (uma vez) sobre o crop esticado ----
+        var toned = CropLin();
+        AstroPipeline.Stretch(toned, p);
+        AstroPipeline.Scnr(toned, p.Scnr);
+        AstroPipeline.SaturationAndCurve(toned, p.Saturation);
+        var sw = Stopwatch.StartNew();
+        var starless = StarRemoval.Starless(toned);
+        var stars = StarRemoval.StarsLayer(toned, starless);
+        sw.Stop();
+        Console.WriteLine($"  separação {w}x{h}: {sw.ElapsedMilliseconds} ms");
+
+        // ---- A/B 2: contraste local do fundo ----
+        var lcA = new StarWorkflow { Starless = starless, Stars = stars };
+        var lcB = new StarWorkflow { Starless = starless, Stars = stars, LocalContrast = 0.8 };
+        File.WriteAllBytes("testdata/ab_localcontrast_a_off.jpg", PreviewRenderer.EncodeImage(lcA.Compose(), 92));
+        File.WriteAllBytes("testdata/ab_localcontrast_b_on.jpg", PreviewRenderer.EncodeImage(lcB.Compose(), 92));
+        Console.WriteLine("  contraste local -> testdata/ab_localcontrast_a_off.jpg / _b_on.jpg");
+
+        // ---- A/B 3: redução + saturação de estrelas ----
+        var srA = new StarWorkflow { Starless = starless, Stars = stars };
+        var srB = new StarWorkflow { Starless = starless, Stars = stars, StarReduction = 0.9, StarSaturation = 1.3 };
+        File.WriteAllBytes("testdata/ab_starreduce_a_off.jpg", PreviewRenderer.EncodeImage(srA.Compose(), 92));
+        File.WriteAllBytes("testdata/ab_starreduce_b_on.jpg", PreviewRenderer.EncodeImage(srB.Compose(), 92));
+        Console.WriteLine("  redução estrelas -> testdata/ab_starreduce_a_off.jpg / _b_on.jpg");
+    }
+
     static void Bench(string path)
     {
         var img = TiffIO.LoadFloat(path);
@@ -306,5 +384,119 @@ public static class SelfTest
             float med = AstroPipeline.MedianOf(ch); // destrói a cópia (ok)
             Console.WriteLine($"  {name[c],-6}{min,14:E4}{max,14:E4}{med,14:E4}");
         }
+    }
+
+    static LinearImage MakeSynthetic(int w, int h)
+    {
+        var data = new float[w * h * 3];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int i = (y * w + x) * 3;
+                data[i + 0] = (float)x / (w - 1);
+                data[i + 1] = (float)y / (h - 1);
+                data[i + 2] = (float)(x + y) / (w + h - 2);
+            }
+        return new LinearImage { Width = w, Height = h, Data = data };
+    }
+
+    static void Resample()
+    {
+        Console.WriteLine("== Resample (drizzle) ==");
+        var img = MakeSynthetic(64, 48);
+
+        var r1 = PreviewRenderer.Resample(img, 1);
+        if (r1.Width != 64 || r1.Height != 48)
+            throw new Exception($"factor 1 mudou dims: {r1.Width}x{r1.Height}");
+
+        var r2 = PreviewRenderer.Resample(img, 2);
+        if (r2.Width != 32 || r2.Height != 24)
+            throw new Exception($"factor 2: esperado 32x24, obtido {r2.Width}x{r2.Height}");
+
+        Console.WriteLine($"  factor1={r1.Width}x{r1.Height} factor2={r2.Width}x{r2.Height} -> OK");
+    }
+
+    static LinearImage MakeNoisy(int w, int h)
+    {
+        var rng = new Random(1);
+        var data = new float[w * h * 3];
+        for (int i = 0; i < data.Length; i++)
+            data[i] = (float)Math.Clamp(0.3 + (rng.NextDouble() - 0.5) * 0.4, 0, 1);
+        return new LinearImage { Width = w, Height = h, Data = data };
+    }
+
+    static void NrLinear()
+    {
+        Console.WriteLine("== NR linear (no-op + efeito) ==");
+        var img = MakeNoisy(128, 96);
+
+        var a = img.Clone();
+        AstroPipeline.DenoiseLinear(a, 0);
+        for (int i = 0; i < a.Data.Length; i++)
+            if (a.Data[i] != img.Data[i])
+                throw new Exception("strength 0 alterou os dados (devia ser no-op)");
+
+        var b = img.Clone();
+        AstroPipeline.DenoiseLinear(b, 1);
+        double diff = 0;
+        for (int i = 0; i < b.Data.Length; i++) diff += Math.Abs(b.Data[i] - img.Data[i]);
+        if (diff <= 0) throw new Exception("strength 1 não alterou nada");
+
+        Console.WriteLine($"  no-op OK; strength1 soma|Δ|={diff:F2} -> OK");
+    }
+
+    static void StarProc()
+    {
+        Console.WriteLine("== Contraste local (no-op + efeito) ==");
+        var img = MakeNoisy(128, 96);
+
+        var a = img.Clone();
+        AstroPipeline.LocalContrast(a, 0);
+        for (int i = 0; i < a.Data.Length; i++)
+            if (a.Data[i] != img.Data[i])
+                throw new Exception("LocalContrast 0 não é no-op");
+
+        var b = img.Clone();
+        AstroPipeline.LocalContrast(b, 0.8);
+        double diff = 0;
+        for (int i = 0; i < b.Data.Length; i++) diff += Math.Abs(b.Data[i] - img.Data[i]);
+        if (diff <= 0) throw new Exception("LocalContrast 0.8 não alterou nada");
+
+        Console.WriteLine($"  no-op OK; soma|Δ|={diff:F2} -> OK");
+    }
+
+    static LinearImage MakeStarField(int w, int h)
+    {
+        var data = new float[w * h * 3];                 // fundo preto
+        (int cx, int cy)[] stars = { (60, 60), (180, 90), (120, 200) };
+        foreach (var (cx, cy) in stars)
+            for (int y = -6; y <= 6; y++)
+                for (int x = -6; x <= 6; x++)
+                {
+                    int px = cx + x, py = cy + y;
+                    if (px < 0 || py < 0 || px >= w || py >= h) continue;
+                    if (x * x + y * y > 36) continue;     // disco r=6
+                    int i = (py * w + px) * 3;
+                    data[i] = data[i + 1] = data[i + 2] = 0.9f;
+                }
+        return new LinearImage { Width = w, Height = h, Data = data };
+    }
+
+    static void ReduceStarsTest()
+    {
+        Console.WriteLine("== Redução de estrelas (no-op + encolhe) ==");
+        var stars = MakeStarField(256, 256);
+
+        var r0 = StarRemoval.ReduceStars(stars, 0);
+        for (int i = 0; i < r0.Data.Length; i++)
+            if (r0.Data[i] != stars.Data[i])
+                throw new Exception("amount 0 não é no-op");
+
+        var r1 = StarRemoval.ReduceStars(stars, 1);
+        double s0 = 0, s1 = 0;
+        for (int i = 0; i < stars.Data.Length; i++) { s0 += stars.Data[i]; s1 += r1.Data[i]; }
+        if (s1 >= s0) throw new Exception($"erosão não reduziu energia: {s1:F1} >= {s0:F1}");
+
+        Console.WriteLine($"  no-op OK; soma estrelas {s0:F0} -> {s1:F0} (menor) -> OK");
     }
 }

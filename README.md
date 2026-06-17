@@ -5,17 +5,20 @@ lineares de astrofotografia (`Autosave.tif` do DeepSkyStacker). Abres um TIF, aj
 processamento com sliders em tempo real sobre um preview, e exportas em full-res
 (TIF 16-bit + JPEG).
 
-O pipeline matemático está validado contra um *groundtruth* em Python
-(`ReferenceCode/astro_process_groundtruth.py`) — diferença média < 2/255 por pixel no JPEG.
-
 ## Funcionalidades
 
+- **Prompt de drizzle ao abrir** — escolhe Nenhum / 2× / 3×; imagens drizzladas ou
+  sobreamostradas são reamostradas (÷N, por área) antes do processamento.
 - **Fase A** (1× ao abrir): normalização, crop, extração de background (polinómio de 2ª
-  ordem + termos radiais para vinhetagem, com fit robusto), calibração de cor.
+  ordem + termos radiais para vinhetagem, com fit robusto), calibração de cor, e
+  **redução de ruído linear opcional** (pré-stretch).
 - **Fase B** (tempo real sobre proxy 1536 px, ~100 ms/render): stretch arcsinh + MTF,
   SCNR, saturação seletiva, black point.
 - **Redução de ruído** mascarada (bilateral + gaussiano) com pré-visualização a 100%.
 - **Inspetor de campo 1:1** — grelha 3×3 (cantos, bordas e centro) que se adapta à janela.
+- **Separação de estrelas** (StarNet/darkstar via ONNX) com workflow de fundo:
+  clone stamp, ganho, saturação e **contraste local** no fundo sem estrelas;
+  **redução (erosão) e saturação** na camada de estrelas; recombinação por *screen*.
 - **Deconvolução estelar por IA** (classe BlurXTerminator), via ONNX Runtime + DirectML (GPU).
 - **Export** TIF 16-bit (deflate) + JPEG q93, com barra de progresso.
 - Abertura por **caminho**, **diálogo nativo** ou **upload**; tema escuro; recentes.
@@ -25,10 +28,8 @@ O pipeline matemático está validado contra um *groundtruth* em Python
 - **Windows x64** (depende de `OpenCvSharp4.runtime.win`, ONNX Runtime DirectML e do
   diálogo nativo `comdlg32`).
 - **.NET 10 SDK** — https://dotnet.microsoft.com/download
-- **GPU compatível com DirectX 12** (recomendado) para a deconvolução por IA. Sem GPU,
-  a IA corre em CPU (lento); o resto da app não precisa de GPU.
-- *(Opcional)* **Python 3** com `numpy`, `tifffile`, `opencv-python` — apenas para correr
-  os scripts de validação em `ReferenceCode/`.
+- **GPU compatível com DirectX 12** (recomendado) para a deconvolução por IA e a separação
+  de estrelas. Sem GPU, correm em CPU (lento); o resto da app não precisa de GPU.
 
 ## Compilar e correr
 
@@ -56,19 +57,26 @@ dotnet publish -c Release -r win-x64 --self-contained
 ## Utilização
 
 1. Indica o caminho do `Autosave.tif` (ou usa **📂 Procurar** / **upload**) e clica **Abrir**.
-2. Aguarda a Fase A (barra de progresso no preview).
-3. Ajusta os sliders (Stretch, Céu, Black point, SCNR, Saturação, NR).
-4. Usa **Inspeção 1:1** para avaliar foco/estrelas e ligar a **Deconvolução IA**.
-5. **Exportar** gera `{prefixo}_16bit.tif` e `{prefixo}.jpg`.
+2. Responde ao prompt de **drizzle** (Nenhum / 2× / 3×).
+3. Aguarda a Fase A (barra de progresso no preview).
+4. Ajusta os sliders (Stretch, Céu, Black point, SCNR, Saturação, NR, NR linear).
+5. Opcional: **Separar estrelas** e afinar o fundo (clone stamp, ganho, saturação,
+   contraste local) e as estrelas (redução, saturação).
+6. Usa **Inspeção 1:1** para avaliar foco/estrelas e ligar a **Deconvolução IA**.
+7. **Exportar** gera `{prefixo}_16bit.tif` e `{prefixo}.jpg`.
 
-### Modos CLI de teste/validação
+### Modos CLI de teste
 
 ```bash
-dotnet run -c Release -- tiff-test <Autosave.tif>   # I/O + round-trip
-dotnet run -c Release -- phasea   <Autosave.tif>    # medianas pós-background
-dotnet run -c Release -- phaseb   <Autosave.tif>    # JPEG do proxy (defaults)
-dotnet run -c Release -- fullb    <in> <out.jpg>    # Fase A+B full-res
-dotnet run -c Release -- bench    <Autosave.tif>    # tempos da Fase B
+dotnet run -c Release -- tiff-test    <Autosave.tif>   # I/O + round-trip
+dotnet run -c Release -- phasea       <Autosave.tif>   # medianas pós-background
+dotnet run -c Release -- phaseb       <Autosave.tif>   # JPEG do proxy (defaults)
+dotnet run -c Release -- bench        <Autosave.tif>   # tempos da Fase B
+dotnet run -c Release -- startest     <Autosave.tif>   # separação de estrelas
+dotnet run -c Release -- resample                       # resample por drizzle (sintético)
+dotnet run -c Release -- nrlinear                       # NR linear (sintético)
+dotnet run -c Release -- starproc                       # contraste local (sintético)
+dotnet run -c Release -- reducestars                    # redução de estrelas (sintético)
 ```
 
 ## Estrutura
@@ -76,9 +84,9 @@ dotnet run -c Release -- bench    <Autosave.tif>    # tempos da Fase B
 ```
 Components/      páginas e componentes Blazor (Editor, SliderControl)
 Services/        TiffIO, AstroPipeline (núcleo), PreviewRenderer, ExportService,
-                 ProcessingSession, AiSharpen (ONNX), NativeFileDialog
-Models/          modelo ONNX de deconvolução estelar
-ReferenceCode/   groundtruth Python + port C# de referência + scripts de validação
+                 ProcessingSession, StarRemoval/StarWorkflow, AiSharpen (ONNX),
+                 NativeFileDialog, SelfTest
+Models/          modelos ONNX (separação de estrelas e deconvolução estelar)
 SPEC/            especificação do projeto
 wwwroot/         tema (app.css), favicon, JS
 ```
@@ -109,9 +117,9 @@ Esta aplicação usa componentes de terceiros, com gratidão:
 | DirectML (redistribuível Microsoft) | — | Microsoft (via ONNX Runtime) | https://github.com/microsoft/DirectML |
 | Bootstrap (template, em `wwwroot/lib`) | 5.x | MIT | https://github.com/twbs/bootstrap |
 
-**Modelo de IA:** `Models/deep_sharp_stellar_cnn.onnx` é o modelo de *sharpening* estelar do
-projeto **Cosmic Clarity** de Seti Astro (**licença MIT**), incluído para conveniência.
-Fonte: https://github.com/setiastro/cosmicclarity
+**Modelos de IA:** os modelos de separação de estrelas e de *sharpening* estelar em
+`Models/` provêm do projeto **Cosmic Clarity** de Seti Astro (**licença MIT**), incluídos
+para conveniência. Fonte: https://github.com/setiastro/cosmicclarity
 
 > As licenças MIT/Apache/BSD exigem a preservação dos respetivos avisos de copyright. Os
 > textos completos das licenças estão disponíveis nos repositórios acima.

@@ -305,6 +305,53 @@ public static class AstroPipeline
         }
     }
 
+    /// <summary>NR LINEAR (pré-stretch), gentil: chroma gaussian σ=2 + luma bilateral
+    /// suave, blend por strength. Corre na Fase A (1×, full-res). strength≤0 = no-op.
+    /// Mais gentil que Denoise porque em linear o sinal está comprimido nas sombras.</summary>
+    public static void DenoiseLinear(LinearImage img, double strength)
+    {
+        if (strength <= 0) return;
+        int H = img.Height, W = img.Width, N = H * W;
+        var d = img.Data;
+        float s = (float)Math.Clamp(strength, 0, 1);
+
+        var luma = new float[N];
+        var chroma = new float[N * 3];
+        for (int i = 0; i < N; i++)
+        {
+            luma[i] = 0.2126f * d[i * 3] + 0.7152f * d[i * 3 + 1] + 0.0722f * d[i * 3 + 2];
+            for (int c = 0; c < 3; c++) chroma[i * 3 + c] = d[i * 3 + c] - luma[i];
+        }
+
+        // cromático: gaussian σ=2 por canal, blend 0.9·s
+        var plane = new float[N];
+        for (int c = 0; c < 3; c++)
+        {
+            for (int i = 0; i < N; i++) plane[i] = chroma[i * 3 + c];
+            using var m = Mat.FromPixelData(H, W, MatType.CV_32FC1, plane);
+            using var ms = new Mat();
+            Cv2.GaussianBlur(m, ms, new Size(), 2);
+            ms.GetArray(out float[] sm);
+            float w = 0.9f * s;
+            for (int i = 0; i < N; i++) chroma[i * 3 + c] = chroma[i * 3 + c] * (1 - w) + sm[i] * w;
+        }
+
+        // luminância: bilateral suave, blend 0.6·s
+        float[] ls;
+        using (var mL = Mat.FromPixelData(H, W, MatType.CV_32FC1, luma))
+        using (var m1 = new Mat())
+        {
+            Cv2.BilateralFilter(mL, m1, 5, 0.02, 4);
+            m1.GetArray(out ls);
+        }
+        float wl = 0.6f * s;
+        for (int i = 0; i < N; i++)
+        {
+            float l = luma[i] * (1 - wl) + ls[i] * wl;
+            for (int c = 0; c < 3; c++) d[i * 3 + c] = Math.Clamp(l + chroma[i * 3 + c], 0f, 1f);
+        }
+    }
+
     // ================================== coma (cosmético, opcional) ==
 
     /// <summary>
@@ -358,6 +405,35 @@ public static class AstroPipeline
                 }
             });
         }
+    }
+
+    /// <summary>Contraste local: unsharp de raio GRANDE na luminância, ratiométrico
+    /// (preserva cor). amount≤0 = no-op. sigma escala com o lado maior (efeito igual
+    /// proxy↔full). Usa OpenCvSharp.</summary>
+    public static void LocalContrast(LinearImage img, double amount)
+    {
+        if (amount <= 0) return;
+        int H = img.Height, W = img.Width, N = W * H;
+        var d = img.Data;
+        float sigma = (float)(Math.Max(W, H) * 0.02);
+
+        var luma = new float[N];
+        for (int i = 0; i < N; i++)
+            luma[i] = 0.2126f * d[i * 3] + 0.7152f * d[i * 3 + 1] + 0.0722f * d[i * 3 + 2];
+
+        using var m = Mat.FromPixelData(H, W, MatType.CV_32FC1, luma);
+        using var mb = new Mat();
+        Cv2.GaussianBlur(m, mb, new Size(), sigma);
+        mb.GetArray(out float[] blur);
+
+        float a = (float)amount;
+        Parallel.For(0, N, i =>
+        {
+            float l = luma[i];
+            float ln = Math.Clamp(l + a * (l - blur[i]), 0f, 1f);
+            float ratio = l > 1e-6f ? ln / l : 1f;
+            for (int c = 0; c < 3; c++) d[i * 3 + c] = Math.Clamp(d[i * 3 + c] * ratio, 0f, 1f);
+        });
     }
 
     // ============================================================ helpers ==

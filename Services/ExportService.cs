@@ -40,7 +40,7 @@ public static class ExportService
                 progress.Report(0.80);
                 var starsLayer = StarRemoval.StarsLayer(img, starless);
                 stars.ApplyToFull(starless);
-                img = StarRemoval.Screen(starless, starsLayer);
+                img = StarRemoval.Screen(starless, stars.ProcessStars(starsLayer));
                 progress.Report(0.88);
             }
             else

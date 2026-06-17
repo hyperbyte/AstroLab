@@ -16,6 +16,12 @@ public sealed class ProcessingSession
     public bool Radial { get; set; } = true;
     public double Crop { get; set; } = 0.012;
 
+    /// <summary>Fator de drizzle/oversampling; >1 reduz a imagem no início da Fase A. Default 1.</summary>
+    public int DrizzleFactor { get; set; } = 1;
+
+    /// <summary>Força de NR linear aplicada na Fase A (pré-stretch). 0 = off. Default 0.</summary>
+    public double LinearDenoise { get; set; } = 0;
+
     /// <summary>Workflow de separação de estrelas (ativo quando != null).</summary>
     public StarWorkflow? Stars { get; set; }
 
@@ -58,6 +64,12 @@ public sealed class ProcessingSession
                 progress.Report(("a carregar TIF…", 0.05));
                 var img = TiffIO.LoadFloat(path);
 
+                if (DrizzleFactor > 1)
+                {
+                    progress.Report(("a reamostrar (drizzle)…", 0.15));
+                    img = PreviewRenderer.Resample(img, DrizzleFactor);
+                }
+
                 progress.Report(("a normalizar…", 0.22));
                 AstroPipeline.Normalize(img);
 
@@ -69,6 +81,12 @@ public sealed class ProcessingSession
 
                 progress.Report(("a calibrar cor…", 0.80));
                 AstroPipeline.ColorCalibrate(img);
+
+                if (LinearDenoise > 0)
+                {
+                    progress.Report(("a reduzir ruído (linear)…", 0.88));
+                    AstroPipeline.DenoiseLinear(img, LinearDenoise);
+                }
 
                 progress.Report(("a gerar proxy…", 0.95));
                 LinearFull = img;

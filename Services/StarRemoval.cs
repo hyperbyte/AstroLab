@@ -4,6 +4,8 @@
 
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
+using OpenCvSharp;
+using System.Runtime.InteropServices;
 
 namespace AstroLab.Services;
 
@@ -144,6 +146,29 @@ public static class StarRemoval
         for (int i = 0; i < n; i++)
             o[i] = Math.Clamp(1f - (1f - bg.Data[i]) * (1f - stars.Data[i]), 0f, 1f);
         return new LinearImage { Width = bg.Width, Height = bg.Height, Data = o };
+    }
+
+    /// <summary>Reduz estrelas por erosão morfológica + blend. amount≤0 devolve cópia
+    /// inalterada. O raio do kernel escala com a resolução (efeito igual proxy↔full).</summary>
+    public static LinearImage ReduceStars(LinearImage stars, double amount)
+    {
+        if (amount <= 0) return stars.Clone();
+        int W = stars.Width, H = stars.Height;
+        int r = Math.Max(1, (int)Math.Round(Math.Max(W, H) * 0.0006));
+
+        using var src = stars.AsMat();                   // CV_32FC3 RGB; stars.Data vivo neste escopo
+        using var ker = Cv2.GetStructuringElement(MorphShapes.Ellipse, new Size(2 * r + 1, 2 * r + 1));
+        using var er = new Mat();
+        Cv2.Erode(src, er, ker);
+
+        var eroded = new float[(long)W * H * 3];
+        Marshal.Copy(er.Data, eroded, 0, eroded.Length);
+
+        float a = (float)Math.Clamp(amount, 0, 1);
+        var sd = stars.Data;
+        var outD = new float[(long)W * H * 3];
+        for (int i = 0; i < outD.Length; i++) outD[i] = sd[i] * (1 - a) + eroded[i] * a;
+        return new LinearImage { Width = W, Height = H, Data = outD };
     }
 
     // MTF do stretch (mediana → target) e o seu inverso, idênticos ao Cosmic Clarity.

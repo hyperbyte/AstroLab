@@ -26,6 +26,15 @@ public static class PreviewRenderer
         return new LinearImage { Width = nw, Height = nh, Data = data };
     }
 
+    /// <summary>Reamostra por um fator de drizzle inteiro (≥2 reduz por área; ≤1 = no-op).
+    /// Corre na Fase A, antes do resto. Ver design 2026-06-17.</summary>
+    public static LinearImage Resample(LinearImage img, int factor)
+    {
+        if (factor <= 1) return img;
+        int maxSide = (int)Math.Round(Math.Max(img.Width, img.Height) / (double)factor);
+        return MakeProxy(img, maxSide);
+    }
+
     /// <summary>
     /// Fase B (stretch arcsinh+MTF+blackpoint, SCNR, saturação+curva) sobre uma
     /// CÓPIA do proxy, encode JPEG. Ordem = Python (stretch→scnr→saturação), sem NR.

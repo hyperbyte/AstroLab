@@ -15,6 +15,9 @@ public sealed class StarWorkflow
 
     public double Gain = 1.0;        // ganho do fundo (multiplicativo)
     public double Saturation = 1.0;  // saturação do fundo
+    public double LocalContrast = 0;  // contraste local do fundo (unsharp raio grande)
+    public double StarReduction = 0;     // redução de estrelas (erosão), 0–1
+    public double StarSaturation = 1.0;  // saturação da camada de estrelas
 
     /// <summary>Fundo a usar (editado se existir, senão o original).</summary>
     public LinearImage BackgroundBase => Edited ?? Starless;
@@ -24,8 +27,8 @@ public sealed class StarWorkflow
     public LinearImage Compose()
     {
         var bg = BackgroundBase.Clone();
-        AdjustBackground(bg, Gain, Saturation);
-        return StarRemoval.Screen(bg, Stars);
+        ProcessBackground(bg);
+        return StarRemoval.Screen(bg, ProcessStars(Stars));
     }
 
     /// <summary>Aplica a um starless FULL-RES a correção de clone (diferença do proxy,
@@ -41,7 +44,7 @@ public sealed class StarWorkflow
             var d = fullStarless.Data;
             for (int i = 0; i < d.Length; i++) d[i] = Math.Clamp(d[i] + up[i], 0f, 1f);
         }
-        AdjustBackground(fullStarless, Gain, Saturation);
+        ProcessBackground(fullStarless);
     }
 
     /// <summary>Ganho (multiplica, mantém o preto) + saturação seletiva, in-place.</summary>
@@ -60,5 +63,22 @@ public sealed class StarWorkflow
             d[i + 1] = (float)Math.Clamp(mean + (g - mean) * sat, 0, 1);
             d[i + 2] = (float)Math.Clamp(mean + (b - mean) * sat, 0, 1);
         });
+    }
+
+    /// <summary>Processa o FUNDO in-place: ganho + saturação + contraste local.
+    /// Partilhado entre preview (proxy) e export (full-res).</summary>
+    public void ProcessBackground(LinearImage img)
+    {
+        AdjustBackground(img, Gain, Saturation);
+        AstroPipeline.LocalContrast(img, LocalContrast);
+    }
+
+    /// <summary>Processa as ESTRELAS: redução (erosão) + saturação. Devolve nova imagem
+    /// (não muta o input). Partilhado entre preview e export.</summary>
+    public LinearImage ProcessStars(LinearImage stars)
+    {
+        var s = StarRemoval.ReduceStars(stars, StarReduction);
+        AdjustBackground(s, 1.0, StarSaturation);
+        return s;
     }
 }

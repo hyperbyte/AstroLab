@@ -95,6 +95,11 @@
                 Termos radiais (vinhetagem)
             </label>
             <div class="slider-note">desligar quando a calibração com bias/dark flats estiver correta — recorre a Fase A</div>
+            <SliderControl Label="NR linear (antes do stretch)" Min="0" Max="1" Step="0.05" Default="0"
+                           Disabled="@_busy"
+                           Note="recorre a Fase A (mais lento) — reduz ruído no domínio linear"
+                           Value="Session.LinearDenoise"
+                           ValueChanged="OnLinearDenoise" />
         </section>
 
         <section>
@@ -160,6 +165,15 @@
                     <SliderControl Label="Saturação fundo" Min="0" Max="2.5" Step="0.05" Default="1.0"
                                    Value="Session.Stars.Saturation"
                                    ValueChanged="@(v => OnStarParam(() => Session.Stars!.Saturation = v))" />
+                    <SliderControl Label="Contraste local (fundo)" Min="0" Max="1" Step="0.05" Default="0"
+                                   Value="Session.Stars.LocalContrast"
+                                   ValueChanged="@(v => OnStarParam(() => Session.Stars!.LocalContrast = v))" />
+                    <SliderControl Label="Redução de estrelas" Min="0" Max="1" Step="0.05" Default="0"
+                                   Value="Session.Stars.StarReduction"
+                                   ValueChanged="@(v => OnStarParam(() => Session.Stars!.StarReduction = v))" />
+                    <SliderControl Label="Saturação estrelas" Min="0" Max="2.5" Step="0.05" Default="1.0"
+                                   Value="Session.Stars.StarSaturation"
+                                   ValueChanged="@(v => OnStarParam(() => Session.Stars!.StarSaturation = v))" />
                     <button class="btn btn-block" @onclick="ExitStars">Sair (descartar separação)</button>
                 </div>
             }
@@ -294,6 +308,27 @@
     </div>
 }
 
+@if (_drizzleOpen)
+{
+    <div class="modal-backdrop" @onclick="@(() => _drizzleOpen = false)">
+        <div class="modal modal-narrow" @onclick:stopPropagation="true">
+            <div class="modal-head">
+                <span>Drizzle / Resample</span>
+                <button class="slider-reset" @onclick="@(() => _drizzleOpen = false)">🗙</button>
+            </div>
+            <div class="slider-note">
+                Foi aplicado drizzle no empilhamento? Imagens drizzladas ou sobreamostradas
+                (incl. de fontes não-DSLR) são reduzidas antes do processamento para recuperar SNR.
+            </div>
+            <div class="open-row" style="margin-top:.8rem">
+                <button class="btn" @onclick="@(() => ConfirmDrizzle(1))">Nenhum</button>
+                <button class="btn" @onclick="@(() => ConfirmDrizzle(2))">2×</button>
+                <button class="btn" @onclick="@(() => ConfirmDrizzle(3))">3×</button>
+            </div>
+        </div>
+    </div>
+}
+
 @code {
     string _path = "";
     bool _radial = true;        // termos radiais no background (Fase A)
@@ -313,6 +348,8 @@
     bool _tone => _ready && Session.Stars is null;
     string? _error;
     int _ver;                   // versão de render p/ descartar obsoletos
+
+    bool _drizzleOpen;
 
     // --- preview de NR ---
     ElementReference _previewImg;
@@ -380,8 +417,15 @@
     {
         _error = null;
         if (!File.Exists(_path)) { _error = "Ficheiro não encontrado."; return; }
+        _drizzleOpen = true;                 // pergunta o drizzle antes de correr a Fase A
+        await InvokeAsync(StateHasChanged);
+    }
 
+    async Task ConfirmDrizzle(int factor)
+    {
+        _drizzleOpen = false;
         Session.Radial = _radial;
+        Session.DrizzleFactor = factor;
         await RunPhaseA(() => Session.OpenAsync(_path, MakeProgress()), () =>
         {
             RecentFiles.Add(_path);
@@ -393,6 +437,13 @@
     {
         _radial = e.Value is true || e.Value?.ToString() == "True";
         Session.Radial = _radial;
+        if (Session.IsLoaded)
+            await RunPhaseA(() => Session.ReprocessAsync(MakeProgress()));
+    }
+
+    async Task OnLinearDenoise(double v)
+    {
+        Session.LinearDenoise = v;
         if (Session.IsLoaded)
             await RunPhaseA(() => Session.ReprocessAsync(MakeProgress()));
     }
@@ -437,6 +488,17 @@
     async Task ResetDefaults()
     {
         Session.Params = ToneParams.Defaults;
+        if (Session.Stars is not null)
+        {
+            Session.Stars.Gain = 1.0;
+            Session.Stars.Saturation = 1.0;
+            Session.Stars.LocalContrast = 0;
+            Session.Stars.StarReduction = 0;
+            Session.Stars.StarSaturation = 1.0;
+            ComposeStarPreview();
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
         await ScheduleRender();
         await InvokeAsync(StateHasChanged);   // atualiza posições dos sliders
     }
