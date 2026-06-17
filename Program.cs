@@ -2,7 +2,7 @@ using AstroLab.Components;
 using AstroLab.Services;
 
 // Modo CLI de auto-teste: dotnet run -- tiff-test [path] | phasea <path>
-if (args.Length > 0 && args[0] is "tiff-test" or "phasea" or "phaseb" or "fullb" or "bench" or "comatest" or "aitest" or "startest")
+if (args.Length > 0 && args[0] is "tiff-test" or "phasea" or "phaseb" or "fullb" or "bench" or "comatest" or "aitest" or "startest" or "resample")
     return SelfTest.Run(args);
 
 var builder = WebApplication.CreateBuilder(args);

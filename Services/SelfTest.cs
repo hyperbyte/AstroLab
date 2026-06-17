@@ -48,6 +48,9 @@ public static class SelfTest
                     if (args.Length < 2) throw new ArgumentException("uso: startest <path>");
                     StarTest(args[1]);
                     break;
+                case "resample":
+                    Resample();
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -306,5 +309,35 @@ public static class SelfTest
             float med = AstroPipeline.MedianOf(ch); // destrói a cópia (ok)
             Console.WriteLine($"  {name[c],-6}{min,14:E4}{max,14:E4}{med,14:E4}");
         }
+    }
+
+    static LinearImage MakeSynthetic(int w, int h)
+    {
+        var data = new float[w * h * 3];
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+            {
+                int i = (y * w + x) * 3;
+                data[i + 0] = (float)x / (w - 1);
+                data[i + 1] = (float)y / (h - 1);
+                data[i + 2] = (float)(x + y) / (w + h - 2);
+            }
+        return new LinearImage { Width = w, Height = h, Data = data };
+    }
+
+    static void Resample()
+    {
+        Console.WriteLine("== Resample (drizzle) ==");
+        var img = MakeSynthetic(64, 48);
+
+        var r1 = PreviewRenderer.Resample(img, 1);
+        if (r1.Width != 64 || r1.Height != 48)
+            throw new Exception($"factor 1 mudou dims: {r1.Width}x{r1.Height}");
+
+        var r2 = PreviewRenderer.Resample(img, 2);
+        if (r2.Width != 32 || r2.Height != 24)
+            throw new Exception($"factor 2: esperado 32x24, obtido {r2.Width}x{r2.Height}");
+
+        Console.WriteLine($"  factor1={r1.Width}x{r1.Height} factor2={r2.Width}x{r2.Height} -> OK");
     }
 }

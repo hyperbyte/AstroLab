@@ -16,6 +16,9 @@ public sealed class ProcessingSession
     public bool Radial { get; set; } = true;
     public double Crop { get; set; } = 0.012;
 
+    /// <summary>Fator de drizzle/oversampling; >1 reduz a imagem no início da Fase A. Default 1.</summary>
+    public int DrizzleFactor { get; set; } = 1;
+
     /// <summary>Workflow de separação de estrelas (ativo quando != null).</summary>
     public StarWorkflow? Stars { get; set; }
 
@@ -57,6 +60,12 @@ public sealed class ProcessingSession
             {
                 progress.Report(("a carregar TIF…", 0.05));
                 var img = TiffIO.LoadFloat(path);
+
+                if (DrizzleFactor > 1)
+                {
+                    progress.Report(("a reamostrar (drizzle)…", 0.15));
+                    img = PreviewRenderer.Resample(img, DrizzleFactor);
+                }
 
                 progress.Report(("a normalizar…", 0.22));
                 AstroPipeline.Normalize(img);
