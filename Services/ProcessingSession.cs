@@ -12,6 +12,14 @@ public sealed class ProcessingSession
     public string? SourcePath { get; private set; }
     public bool IsLoaded => LinearProxy != null;
 
+    public ProcessingSession()
+    {
+        var s = AppSettings.Load();
+        FocalLengthMm = s.FocalLengthMm;
+        PixelSizeUm = s.PixelSizeUm;
+        AstapPath = s.AstapPath;
+    }
+
     /// <summary>Termos radiais r²/r⁴ na extração de background (vinhetagem). Fase A.</summary>
     public bool Radial { get; set; } = true;
     public double Crop { get; set; } = 0.012;
@@ -21,6 +29,16 @@ public sealed class ProcessingSession
 
     /// <summary>Força de NR linear aplicada na Fase A (pré-stretch). 0 = off. Default 0.</summary>
     public double LinearDenoise { get; set; } = 0;
+
+    /// <summary>Resolver coordenadas (plate solve ASTAP) na Fase A e mostrar info. Default off.</summary>
+    public bool ShowAnnotation { get; set; }
+    public double FocalLengthMm { get; set; }
+    public double PixelSizeUm { get; set; }
+    public string? AstapPath { get; set; }
+
+    /// <summary>Solução WCS do último solve (null = sem solve/falhou).</summary>
+    public WcsSolution? Wcs { get; private set; }
+    public string? SolveStatus { get; private set; }
 
     /// <summary>Workflow de separação de estrelas (ativo quando != null).</summary>
     public StarWorkflow? Stars { get; set; }
@@ -44,6 +62,10 @@ public sealed class ProcessingSession
     public Task ReprocessAsync(IProgress<(string stage, double pct)> progress)
         => SourcePath is null ? Task.CompletedTask
                               : RunPhaseA(SourcePath, progress, resetParams: false);
+
+    /// <summary>Guarda focal/píxel/ASTAP nos settings persistentes.</summary>
+    public void PersistSolveSettings()
+        => new AppSettings { FocalLengthMm = FocalLengthMm, PixelSizeUm = PixelSizeUm, AstapPath = AstapPath }.Save();
 
     /// <summary>
     /// Fase A: load → normalize → crop → background(radial) → color calibrate → proxy.
@@ -86,6 +108,15 @@ public sealed class ProcessingSession
                 {
                     progress.Report(("a reduzir ruído (linear)…", 0.88));
                     AstroPipeline.DenoiseLinear(img, LinearDenoise);
+                }
+
+                Wcs = null; SolveStatus = null;
+                if (ShowAnnotation)
+                {
+                    progress.Report(("a resolver coordenadas (ASTAP)…", 0.90));
+                    if (PlateSolve.TrySolve(img, AstapPath, FocalLengthMm, PixelSizeUm, out var w, out var st))
+                        Wcs = w;
+                    SolveStatus = st;
                 }
 
                 progress.Report(("a gerar proxy…", 0.95));

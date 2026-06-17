@@ -64,6 +64,19 @@ public static class SelfTest
                     if (args.Length < 2) throw new ArgumentException("uso: abtest <path>");
                     AbTest(args[1]);
                     break;
+                case "wcstest":
+                    WcsTest();
+                    break;
+                case "fovtest":
+                    FovTest();
+                    break;
+                case "settingstest":
+                    SettingsTest();
+                    break;
+                case "solvetest":
+                    if (args.Length < 2) throw new ArgumentException("uso: solvetest <path>");
+                    SolveTest(args[1]);
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -498,5 +511,77 @@ public static class SelfTest
         if (s1 >= s0) throw new Exception($"erosão não reduziu energia: {s1:F1} >= {s0:F1}");
 
         Console.WriteLine($"  no-op OK; soma estrelas {s0:F0} -> {s1:F0} (menor) -> OK");
+    }
+
+    static void WcsTest()
+    {
+        Console.WriteLine("== WcsSolution (parse + projeção TAN) ==");
+        const string header =
+            "CTYPE1  = 'RA---TAN'\nCTYPE2  = 'DEC--TAN'\n" +
+            "CRPIX1  =  3.057500000000E+003\nCRPIX2  =  2.040500000000E+003\n" +
+            "CRVAL1  =  2.458169582032E+002\nCRVAL2  = -2.495790306081E+001\n" +
+            "CD1_1   = -1.835458761921E-004\nCD1_2   =  1.318058558158E-003\n" +
+            "CD2_1   =  1.319524801447E-003\nCD2_2   =  1.846106534218E-004\nPLTSOLVD=T\n";
+
+        var w = WcsSolution.Parse(header) ?? throw new Exception("Parse devolveu null");
+
+        // o pixel de referência projeta-se para si próprio
+        var (px, py) = w.WorldToPixel(245.8169582032, -24.9579030608);
+        if (Math.Abs(px - 3057.5) > 0.01 || Math.Abs(py - 2040.5) > 0.01)
+            throw new Exception($"WorldToPixel(CRVAL) = ({px:F3},{py:F3}), esperado (3057.5,2040.5)");
+
+        // round-trip pixel -> world -> pixel
+        var (ra, dec) = w.PixelToWorld(1000, 1500);
+        var (rx, ry) = w.WorldToPixel(ra, dec);
+        if (Math.Abs(rx - 1000) > 0.01 || Math.Abs(ry - 1500) > 0.01)
+            throw new Exception($"round-trip falhou: ({rx:F3},{ry:F3}) != (1000,1500)");
+
+        Console.WriteLine($"  centro = {w.CenterRaDeg:F4}, {w.CenterDecDeg:F4}");
+        Console.WriteLine($"  escala = {w.ScaleArcsecPerPixel:F3} arcsec/px, orientação = {w.OrientationDeg:F2}°");
+        Console.WriteLine("  WorldToPixel(CRVAL)≈CRPIX OK; round-trip OK");
+    }
+
+    static void FovTest()
+    {
+        Console.WriteLine("== PlateSolve.FovHeightDeg + FindAstap ==");
+        // RedCat 51 (≈247mm efetiva) + Canon RP (5.74µm), altura 4080 px ≈ 5.5°
+        double fov = PlateSolve.FovHeightDeg(247.0, 5.74, 4080);
+        if (fov < 5.0 || fov > 6.0)
+            throw new Exception($"FOV {fov:F2}° fora do esperado (~5.5°)");
+        // inputs inválidos → 0 (modo auto)
+        if (PlateSolve.FovHeightDeg(0, 5.74, 4080) != 0)
+            throw new Exception("focal 0 devia dar FOV 0 (auto)");
+        Console.WriteLine($"  FOV(247mm,5.74µm,4080px) = {fov:F2}° ; astap = {PlateSolve.FindAstap(null) ?? "(não encontrado)"}");
+    }
+
+    static void SettingsTest()
+    {
+        Console.WriteLine("== AppSettings round-trip ==");
+        var s = AppSettings.Load();
+        double origFocal = s.FocalLengthMm;
+        s.FocalLengthMm = 247.0; s.PixelSizeUm = 5.74; s.Save();
+        var s2 = AppSettings.Load();
+        if (Math.Abs(s2.FocalLengthMm - 247.0) > 1e-6 || Math.Abs(s2.PixelSizeUm - 5.74) > 1e-6)
+            throw new Exception($"persistência falhou: {s2.FocalLengthMm}/{s2.PixelSizeUm}");
+        s.FocalLengthMm = origFocal; s.Save();   // restaurar
+        Console.WriteLine("  guardou e releu focal/píxel OK");
+    }
+
+    static void SolveTest(string path)
+    {
+        Console.WriteLine($"== Plate solve end-to-end: {path} ==");
+        var img = TiffIO.LoadFloat(path);
+        AstroPipeline.Normalize(img);
+        img = AstroPipeline.Crop(img, 0.012);
+        AstroPipeline.ExtractBackground(img, radial: true);
+        AstroPipeline.ColorCalibrate(img);
+
+        var sw = Stopwatch.StartNew();
+        bool ok = PlateSolve.TrySolve(img, null, 247.0, 5.74, out var wcs, out var status);
+        sw.Stop();
+        Console.WriteLine($"  {status} em {sw.ElapsedMilliseconds} ms");
+        if (!ok || wcs is null) throw new Exception($"solve falhou: {status}");
+        Console.WriteLine($"  centro = {wcs.CenterRaDeg:F4}, {wcs.CenterDecDeg:F4}");
+        Console.WriteLine($"  escala = {wcs.ScaleArcsecPerPixel:F2}\"/px · FOV {wcs.FovWidthDeg(img.Width):F1}×{wcs.FovHeightDeg(img.Height):F1}° · orient {wcs.OrientationDeg:F1}°");
     }
 }

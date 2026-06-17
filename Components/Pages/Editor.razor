@@ -180,6 +180,33 @@
         </section>
 
         <section>
+            <h3>Anotação (plate solve)</h3>
+            <label class="check">
+                <input type="checkbox" checked="@Session.ShowAnnotation" @onchange="OnAnnotationToggle" disabled="@_busy" />
+                Resolver coordenadas (ASTAP)
+            </label>
+            <div class="slider-note">requer ASTAP instalado — corre na Fase A (mais lento)</div>
+
+            <label class="slider-label" style="margin-top:.6rem">Distância focal efetiva (mm)</label>
+            <input class="path-input" type="number" step="1" @bind="Session.FocalLengthMm" @bind:after="Session.PersistSolveSettings" disabled="@_busy" />
+            <label class="slider-label">Tamanho de píxel (µm)</label>
+            <input class="path-input" type="number" step="0.01" @bind="Session.PixelSizeUm" @bind:after="Session.PersistSolveSettings" disabled="@_busy" />
+
+            @if (Session.Wcs is { } wcs)
+            {
+                <div class="solve-card">
+                    <div>Centro: @wcs.CenterRaDeg.ToString("0.0000")°, @wcs.CenterDecDeg.ToString("0.0000")°</div>
+                    <div>Escala: @wcs.ScaleArcsecPerPixel.ToString("0.00")″/px · FOV @wcs.FovWidthDeg(Session.FullWidth).ToString("0.0")×@wcs.FovHeightDeg(Session.FullHeight).ToString("0.0")°</div>
+                    <div>Orientação: @wcs.OrientationDeg.ToString("0.0")°</div>
+                </div>
+            }
+            else if (Session.SolveStatus is { } st)
+            {
+                <div class="slider-note" style="color:var(--accent)">@st</div>
+            }
+        </section>
+
+        <section>
             <button class="btn btn-block" @onclick="OpenInspector" disabled="@(!_ready)">Inspeção 1:1 (campo)</button>
             <button class="btn btn-block" @onclick="ResetDefaults" disabled="@(!_ready)">Repor defaults</button>
             <button class="btn btn-block btn-accent" @onclick="OpenExport" disabled="@(!_ready)">Exportar</button>
@@ -444,6 +471,14 @@
     async Task OnLinearDenoise(double v)
     {
         Session.LinearDenoise = v;
+        if (Session.IsLoaded)
+            await RunPhaseA(() => Session.ReprocessAsync(MakeProgress()));
+    }
+
+    async Task OnAnnotationToggle(ChangeEventArgs e)
+    {
+        Session.ShowAnnotation = e.Value is true || e.Value?.ToString() == "True";
+        Session.PersistSolveSettings();
         if (Session.IsLoaded)
             await RunPhaseA(() => Session.ReprocessAsync(MakeProgress()));
     }
