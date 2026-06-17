@@ -188,9 +188,9 @@
             <div class="slider-note">requer ASTAP instalado — corre na Fase A (mais lento)</div>
 
             <label class="slider-label" style="margin-top:.6rem">Distância focal efetiva (mm)</label>
-            <input class="path-input" type="number" step="1" @bind="Session.FocalLengthMm" disabled="@_busy" />
+            <input class="path-input" type="number" step="1" @bind="Session.FocalLengthMm" @bind:after="Session.PersistSolveSettings" disabled="@_busy" />
             <label class="slider-label">Tamanho de píxel (µm)</label>
-            <input class="path-input" type="number" step="0.01" @bind="Session.PixelSizeUm" disabled="@_busy" />
+            <input class="path-input" type="number" step="0.01" @bind="Session.PixelSizeUm" @bind:after="Session.PersistSolveSettings" disabled="@_busy" />
 
             @if (Session.Wcs is { } wcs)
             {

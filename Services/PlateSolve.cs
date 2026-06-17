@@ -61,6 +61,8 @@ public static class PlateSolve
 
             using (var proc = Process.Start(psi)!)
             {
+                _ = proc.StandardOutput.ReadToEndAsync();
+                _ = proc.StandardError.ReadToEndAsync();
                 if (!proc.WaitForExit(120_000)) { try { proc.Kill(true); } catch { } status = "solve excedeu o tempo"; return false; }
             }
 
