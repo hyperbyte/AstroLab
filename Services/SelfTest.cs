@@ -60,6 +60,10 @@ public static class SelfTest
                 case "reducestars":
                     ReduceStarsTest();
                     break;
+                case "abtest":  // comparativos A/B das features novas (NR linear, contraste local, redução estrelas)
+                    if (args.Length < 2) throw new ArgumentException("uso: abtest <path>");
+                    AbTest(args[1]);
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -217,6 +221,68 @@ public static class SelfTest
         File.WriteAllBytes("testdata/cs_starless.jpg", PreviewRenderer.EncodeJpeg(starless, 95));
         File.WriteAllBytes("testdata/cs_stars.jpg", PreviewRenderer.EncodeJpeg(stars, 95));
         Console.WriteLine($"  Starless {w}x{h}: {sw.ElapsedMilliseconds} ms -> testdata/cs_starless.jpg, cs_stars.jpg");
+    }
+
+    /// <summary>Comparativos A/B (antes/depois) das 3 features visuais novas, num crop
+    /// central. Escreve pares JPEG em testdata/ab_*.jpg. Tone consistente dentro de cada par.</summary>
+    static void AbTest(string path)
+    {
+        Console.WriteLine($"== A/B das features novas: {path} ==");
+        var img = TiffIO.LoadFloat(path);
+        AstroPipeline.Normalize(img);
+        img = AstroPipeline.Crop(img, 0.012);
+        AstroPipeline.ExtractBackground(img, radial: true);
+        AstroPipeline.ColorCalibrate(img);
+        var p = ToneParams.Defaults;
+
+        const int w = 1280, h = 960;
+        int x0 = (img.Width - w) / 2, y0 = (img.Height - h) / 2;
+        LinearImage CropLin()
+        {
+            var c = new LinearImage { Width = w, Height = h, Data = new float[w * h * 3] };
+            for (int y = 0; y < h; y++)
+                Array.Copy(img.Data, ((long)(y0 + y) * img.Width + x0) * 3, c.Data, (long)y * w * 3, w * 3);
+            return c;
+        }
+
+        // ---- A/B 1: NR linear (pré-stretch). Tone igual nos dois (mid fixo) ----
+        var nrA = CropLin();
+        var nrB = CropLin();
+        AstroPipeline.DenoiseLinear(nrB, 1.0);
+        double mid = AstroPipeline.ComputeMtfMid(nrA, p);   // mesmo midpoint p/ comparação justa
+        foreach (var (img2, tag) in new[] { (nrA, "a_off"), (nrB, "b_on") })
+        {
+            AstroPipeline.Stretch(img2, p, fixedMid: mid);
+            AstroPipeline.Scnr(img2, p.Scnr);
+            AstroPipeline.SaturationAndCurve(img2, p.Saturation);
+            File.WriteAllBytes($"testdata/ab_nrlinear_{tag}.jpg", PreviewRenderer.EncodeJpeg(img2, 92));
+        }
+        Console.WriteLine("  NR linear  -> testdata/ab_nrlinear_a_off.jpg / _b_on.jpg");
+
+        // ---- separação de estrelas (uma vez) sobre o crop esticado ----
+        var toned = CropLin();
+        AstroPipeline.Stretch(toned, p);
+        AstroPipeline.Scnr(toned, p.Scnr);
+        AstroPipeline.SaturationAndCurve(toned, p.Saturation);
+        var sw = Stopwatch.StartNew();
+        var starless = StarRemoval.Starless(toned);
+        var stars = StarRemoval.StarsLayer(toned, starless);
+        sw.Stop();
+        Console.WriteLine($"  separação {w}x{h}: {sw.ElapsedMilliseconds} ms");
+
+        // ---- A/B 2: contraste local do fundo ----
+        var lcA = new StarWorkflow { Starless = starless, Stars = stars };
+        var lcB = new StarWorkflow { Starless = starless, Stars = stars, LocalContrast = 0.8 };
+        File.WriteAllBytes("testdata/ab_localcontrast_a_off.jpg", PreviewRenderer.EncodeImage(lcA.Compose(), 92));
+        File.WriteAllBytes("testdata/ab_localcontrast_b_on.jpg", PreviewRenderer.EncodeImage(lcB.Compose(), 92));
+        Console.WriteLine("  contraste local -> testdata/ab_localcontrast_a_off.jpg / _b_on.jpg");
+
+        // ---- A/B 3: redução + saturação de estrelas ----
+        var srA = new StarWorkflow { Starless = starless, Stars = stars };
+        var srB = new StarWorkflow { Starless = starless, Stars = stars, StarReduction = 0.9, StarSaturation = 1.3 };
+        File.WriteAllBytes("testdata/ab_starreduce_a_off.jpg", PreviewRenderer.EncodeImage(srA.Compose(), 92));
+        File.WriteAllBytes("testdata/ab_starreduce_b_on.jpg", PreviewRenderer.EncodeImage(srB.Compose(), 92));
+        Console.WriteLine("  redução estrelas -> testdata/ab_starreduce_a_off.jpg / _b_on.jpg");
     }
 
     static void Bench(string path)
