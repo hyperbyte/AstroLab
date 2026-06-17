@@ -54,6 +54,9 @@ public static class SelfTest
                 case "nrlinear":
                     NrLinear();
                     break;
+                case "starproc":
+                    StarProc();
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -371,5 +374,25 @@ public static class SelfTest
         if (diff <= 0) throw new Exception("strength 1 não alterou nada");
 
         Console.WriteLine($"  no-op OK; strength1 soma|Δ|={diff:F2} -> OK");
+    }
+
+    static void StarProc()
+    {
+        Console.WriteLine("== Contraste local (no-op + efeito) ==");
+        var img = MakeNoisy(128, 96);
+
+        var a = img.Clone();
+        AstroPipeline.LocalContrast(a, 0);
+        for (int i = 0; i < a.Data.Length; i++)
+            if (a.Data[i] != img.Data[i])
+                throw new Exception("LocalContrast 0 não é no-op");
+
+        var b = img.Clone();
+        AstroPipeline.LocalContrast(b, 0.8);
+        double diff = 0;
+        for (int i = 0; i < b.Data.Length; i++) diff += Math.Abs(b.Data[i] - img.Data[i]);
+        if (diff <= 0) throw new Exception("LocalContrast 0.8 não alterou nada");
+
+        Console.WriteLine($"  no-op OK; soma|Δ|={diff:F2} -> OK");
     }
 }

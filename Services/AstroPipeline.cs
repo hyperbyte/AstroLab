@@ -407,6 +407,35 @@ public static class AstroPipeline
         }
     }
 
+    /// <summary>Contraste local: unsharp de raio GRANDE na luminância, ratiométrico
+    /// (preserva cor). amount≤0 = no-op. sigma escala com o lado maior (efeito igual
+    /// proxy↔full). Usa OpenCvSharp.</summary>
+    public static void LocalContrast(LinearImage img, double amount)
+    {
+        if (amount <= 0) return;
+        int H = img.Height, W = img.Width, N = W * H;
+        var d = img.Data;
+        float sigma = (float)(Math.Max(W, H) * 0.02);
+
+        var luma = new float[N];
+        for (int i = 0; i < N; i++)
+            luma[i] = 0.2126f * d[i * 3] + 0.7152f * d[i * 3 + 1] + 0.0722f * d[i * 3 + 2];
+
+        using var m = Mat.FromPixelData(H, W, MatType.CV_32FC1, luma);
+        using var mb = new Mat();
+        Cv2.GaussianBlur(m, mb, new Size(), sigma);
+        mb.GetArray(out float[] blur);
+
+        float a = (float)amount;
+        Parallel.For(0, N, i =>
+        {
+            float l = luma[i];
+            float ln = Math.Clamp(l + a * (l - blur[i]), 0f, 1f);
+            float ratio = l > 1e-6f ? ln / l : 1f;
+            for (int c = 0; c < 3; c++) d[i * 3 + c] = Math.Clamp(d[i * 3 + c] * ratio, 0f, 1f);
+        });
+    }
+
     // ============================================================ helpers ==
 
     public static double Mtf(double x, double m)
