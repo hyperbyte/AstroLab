@@ -70,6 +70,9 @@ public static class SelfTest
                 case "fovtest":
                     FovTest();
                     break;
+                case "settingstest":
+                    SettingsTest();
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -545,5 +548,18 @@ public static class SelfTest
         if (PlateSolve.FovHeightDeg(0, 5.74, 4080) != 0)
             throw new Exception("focal 0 devia dar FOV 0 (auto)");
         Console.WriteLine($"  FOV(247mm,5.74µm,4080px) = {fov:F2}° ; astap = {PlateSolve.FindAstap(null) ?? "(não encontrado)"}");
+    }
+
+    static void SettingsTest()
+    {
+        Console.WriteLine("== AppSettings round-trip ==");
+        var s = AppSettings.Load();
+        double origFocal = s.FocalLengthMm;
+        s.FocalLengthMm = 247.0; s.PixelSizeUm = 5.74; s.Save();
+        var s2 = AppSettings.Load();
+        if (Math.Abs(s2.FocalLengthMm - 247.0) > 1e-6 || Math.Abs(s2.PixelSizeUm - 5.74) > 1e-6)
+            throw new Exception($"persistência falhou: {s2.FocalLengthMm}/{s2.PixelSizeUm}");
+        s.FocalLengthMm = origFocal; s.Save();   // restaurar
+        Console.WriteLine("  guardou e releu focal/píxel OK");
     }
 }
