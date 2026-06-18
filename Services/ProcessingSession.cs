@@ -39,6 +39,8 @@ public sealed class ProcessingSession
     /// <summary>Solução WCS do último solve (null = sem solve/falhou).</summary>
     public WcsSolution? Wcs { get; private set; }
     public string? SolveStatus { get; private set; }
+    /// <summary>Overlay de anotação (DSO/grelha/estrelas) do último solve. Null se sem solve.</summary>
+    public FieldOverlay? Overlay { get; private set; }
 
     /// <summary>Workflow de separação de estrelas (ativo quando != null).</summary>
     public StarWorkflow? Stars { get; set; }
@@ -110,12 +112,16 @@ public sealed class ProcessingSession
                     AstroPipeline.DenoiseLinear(img, LinearDenoise);
                 }
 
-                Wcs = null; SolveStatus = null;
+                Wcs = null; SolveStatus = null; Overlay = null;
                 if (ShowAnnotation)
                 {
                     progress.Report(("a resolver coordenadas (ASTAP)…", 0.90));
                     if (PlateSolve.TrySolve(img, AstapPath, FocalLengthMm, PixelSizeUm, out var w, out var st))
+                    {
                         Wcs = w;
+                        string? astapDir = Path.GetDirectoryName(PlateSolve.FindAstap(AstapPath) ?? "");
+                        Overlay = FieldAnnotation.Build(w, img.Width, img.Height, astapDir);
+                    }
                     SolveStatus = st;
                 }
 
