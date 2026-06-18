@@ -83,6 +83,10 @@ public static class SelfTest
                 case "annotbuild":
                     AnnotBuild();
                     break;
+                case "annotatetest":
+                    if (args.Length < 2) throw new ArgumentException("uso: annotatetest <path>");
+                    AnnotateTest(args[1]);
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -646,5 +650,44 @@ public static class SelfTest
             if (o.X < 0 || o.Y < 0 || o.X > W || o.Y > H)
                 throw new Exception($"objeto fora da imagem: {o.Name} ({o.X},{o.Y})");
         Console.WriteLine("  -> OK");
+    }
+
+    static void AnnotateTest(string path)
+    {
+        Console.WriteLine($"== Anotação end-to-end: {path} ==");
+        var img = TiffIO.LoadFloat(path);
+        AstroPipeline.Normalize(img);
+        img = AstroPipeline.Crop(img, 0.012);
+        AstroPipeline.ExtractBackground(img, radial: true);
+        AstroPipeline.ColorCalibrate(img);
+
+        if (!PlateSolve.TrySolve(img, null, 247.0, 5.74, out var wcs, out var st) || wcs is null)
+            throw new Exception($"solve falhou: {st}");
+        string? astapDir = System.IO.Path.GetDirectoryName(PlateSolve.FindAstap(null) ?? "");
+        var ov = FieldAnnotation.Build(wcs, img.Width, img.Height, astapDir);
+        int stars = ov.Objects.Count(o => o.IsStar), dso = ov.Objects.Count - stars;
+        Console.WriteLine($"  {dso} DSO, {stars} estrelas nomeadas, {ov.Grid.Count} linhas de grelha no campo");
+
+        // queima o overlay num JPEG esticado (escala overlay→proxy) para inspeção
+        var p = ToneParams.Defaults;
+        AstroPipeline.Stretch(img, p); AstroPipeline.Scnr(img, p.Scnr); AstroPipeline.SaturationAndCurve(img, p.Saturation);
+        var proxy = PreviewRenderer.MakeProxy(img);
+        double k = (double)proxy.Width / ov.Width;
+        using var mat = proxy.AsMat();
+        using var bgr = new OpenCvSharp.Mat();
+        OpenCvSharp.Cv2.CvtColor(mat, bgr, OpenCvSharp.ColorConversionCodes.RGB2BGR);
+        using var u8 = new OpenCvSharp.Mat();
+        bgr.ConvertTo(u8, OpenCvSharp.MatType.CV_8UC3, 255.0);
+        foreach (var g in ov.Grid)
+            for (int i = 1; i < g.Points.Count; i++)
+                OpenCvSharp.Cv2.Line(u8, new((int)(g.Points[i - 1].X * k), (int)(g.Points[i - 1].Y * k)),
+                    new((int)(g.Points[i].X * k), (int)(g.Points[i].Y * k)), new(165, 110, 58), 1);
+        foreach (var o in ov.Objects)
+            OpenCvSharp.Cv2.Ellipse(u8, new((int)(o.X * k), (int)(o.Y * k)),
+                new((int)(Math.Max(o.WidthPx * k / 2, 3)), (int)(Math.Max(o.HeightPx * k / 2, 3))),
+                o.AngleDeg, 0, 360, o.IsStar ? new(255, 208, 159) : new(65, 179, 224), 1);
+        OpenCvSharp.Cv2.ImEncode(".jpg", u8, out byte[] buf);
+        File.WriteAllBytes("testdata/annotate_result.jpg", buf);
+        Console.WriteLine("  -> testdata/annotate_result.jpg");
     }
 }
