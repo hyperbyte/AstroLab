@@ -60,6 +60,9 @@ public static class SelfTest
                 case "reducestars":
                     ReduceStarsTest();
                     break;
+                case "magentatest":
+                    MagentaTest();
+                    break;
                 case "abtest":  // comparativos A/B das features novas (NR linear, contraste local, redução estrelas)
                     if (args.Length < 2) throw new ArgumentException("uso: abtest <path>");
                     AbTest(args[1]);
@@ -87,6 +90,29 @@ public static class SelfTest
             Console.Error.WriteLine($"FALHOU: {ex}");
             return 1;
         }
+    }
+
+    static void MagentaTest()
+    {
+        Console.WriteLine("== RemoveMagenta (invert→SCNR→invert) ==");
+        // campo com halos magenta: fundo neutro + manchas R+B altas, G baixo
+        const int w = 64, h = 64, N = w * h;
+        var d = new float[N * 3];
+        for (int i = 0; i < N; i++) { d[i * 3] = 0.2f; d[i * 3 + 1] = 0.2f; d[i * 3 + 2] = 0.2f; }
+        for (int i = 0; i < N; i += 5) { d[i * 3] = 0.7f; d[i * 3 + 1] = 0.35f; d[i * 3 + 2] = 0.7f; }  // magenta
+        var img = new LinearImage { Width = w, Height = h, Data = d };
+
+        var a = img.Clone();
+        AstroPipeline.RemoveMagenta(a, 0);
+        for (int i = 0; i < a.Data.Length; i++)
+            if (a.Data[i] != img.Data[i]) throw new Exception("amount 0 não é no-op");
+
+        var b = img.Clone();
+        AstroPipeline.RemoveMagenta(b, 0.8);
+        // píxel 0 é magenta: G sobe (verde restaurado) → R/G aproxima-se de 1
+        float rgBefore = img.Data[0] / img.Data[1], rgAfter = b.Data[0] / b.Data[1];
+        if (!(rgAfter < rgBefore)) throw new Exception($"R/G não baixou: {rgBefore:F2}->{rgAfter:F2}");
+        Console.WriteLine($"  no-op OK; halo magenta R/G {rgBefore:F2} -> {rgAfter:F2} (mais neutro) -> OK");
     }
 
     static void PhaseA(string path, bool radial)

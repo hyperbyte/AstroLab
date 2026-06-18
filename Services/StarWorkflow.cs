@@ -18,6 +18,7 @@ public sealed class StarWorkflow
     public double LocalContrast = 0;  // contraste local do fundo (unsharp raio grande)
     public double StarReduction = 0;     // redução de estrelas (erosão), 0–1
     public double StarSaturation = 1.0;  // saturação da camada de estrelas
+    public double StarMagenta = 0;       // remoção de halos magenta (invert→SCNR→invert), 0–1
 
     /// <summary>Fundo a usar (editado se existir, senão o original).</summary>
     public LinearImage BackgroundBase => Edited ?? Starless;
@@ -79,6 +80,7 @@ public sealed class StarWorkflow
     {
         var s = StarRemoval.ReduceStars(stars, StarReduction);
         AdjustBackground(s, 1.0, StarSaturation);
+        AstroPipeline.RemoveMagenta(s, StarMagenta);
         return s;
     }
 }

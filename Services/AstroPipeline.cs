@@ -221,6 +221,19 @@ public static class AstroPipeline
         });
     }
 
+    /// <summary>Remove dominante magenta/roxo (ex.: halos cromáticos das estrelas):
+    /// inverte → SCNR (remove verde) → inverte. O magenta é o complementar do verde, por
+    /// isso ao inverter vira verde, o SCNR remove-o, e ao inverter de volta o magenta sai.
+    /// In-place; amount≤0 = no-op. Reusa <see cref="Scnr"/>.</summary>
+    public static void RemoveMagenta(LinearImage img, double amount)
+    {
+        if (amount <= 0) return;
+        var d = img.Data;
+        for (int i = 0; i < d.Length; i++) d[i] = 1f - d[i];
+        Scnr(img, amount);
+        for (int i = 0; i < d.Length; i++) d[i] = 1f - d[i];
+    }
+
     public static void SaturationAndCurve(LinearImage img, double sat)
     {
         var d = img.Data;
