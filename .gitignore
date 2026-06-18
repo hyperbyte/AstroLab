@@ -44,3 +44,6 @@ __pycache__/
 
 # NOTA: Models/*.onnx fica VERSIONADO de propósito (modelo de IA, ~12 MB) para o
 # repositório ficar executável após clone.
+
+# ---- Playwright MCP (artefactos de sessão de testes na app) ----
+.playwright-mcp/
