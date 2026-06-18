@@ -80,6 +80,9 @@ public static class SelfTest
                 case "dsoparse":
                     DsoParse();
                     break;
+                case "annotbuild":
+                    AnnotBuild();
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -612,5 +615,36 @@ public static class SelfTest
         if (Math.Abs(m24.WidthArcmin - 45.0) > 0.01 || Math.Abs(m24.AngleDeg - 45.0) > 0.01)
             throw new Exception($"M24 elipse errada: {m24.WidthArcmin}/{m24.AngleDeg}");
         Console.WriteLine($"  {objs.Count} objetos; Antares⭑ {antares.RaDeg:F2},{antares.DecDeg:F2}; M4 {m4.LengthArcmin:F1}' -> OK");
+    }
+
+    static void AnnotBuild()
+    {
+        Console.WriteLine("== FieldAnnotation.Build (projeção + grelha) ==");
+        const string header =
+            "CTYPE1='RA---TAN'\nCTYPE2='DEC--TAN'\n" +
+            "CRPIX1=3.057500000000E+003\nCRPIX2=2.040500000000E+003\n" +
+            "CRVAL1=2.458169582032E+002\nCRVAL2=-2.495790306081E+001\n" +
+            "CD1_1=-1.835458761921E-004\nCD1_2=1.318058558158E-003\n" +
+            "CD2_1=1.319524801447E-003\nCD2_2=1.846106534218E-004\nPLTSOLVD=T\n";
+        var wcs = WcsSolution.Parse(header)!;
+        int W = 6114, H = 4080;
+
+        // astapDir null → sem catálogo → só grelha
+        var noCat = FieldAnnotation.Build(wcs, W, H, null);
+        if (noCat.Objects.Count != 0) throw new Exception("sem catálogo devia ter 0 objetos");
+        if (noCat.Grid.Count == 0) throw new Exception("devia ter linhas de grelha");
+        if (noCat.Width != W || noCat.Height != H) throw new Exception("dims erradas");
+
+        // com o catálogo real do ASTAP (M4 ~245.9/-26.5 está no campo de Rho Oph)
+        string? astapDir = System.IO.Path.GetDirectoryName(PlateSolve.FindAstap(null) ?? "");
+        var full = FieldAnnotation.Build(wcs, W, H, astapDir);
+        Console.WriteLine($"  só grelha: {noCat.Grid.Count} linhas | com catálogo: {full.Objects.Count} objetos no campo");
+        if (astapDir != null && full.Objects.Count == 0)
+            throw new Exception("esperava objetos no campo de Rho Oph (M4, etc.)");
+        // todos os objetos dentro da imagem
+        foreach (var o in full.Objects)
+            if (o.X < 0 || o.Y < 0 || o.X > W || o.Y > H)
+                throw new Exception($"objeto fora da imagem: {o.Name} ({o.X},{o.Y})");
+        Console.WriteLine("  -> OK");
     }
 }
