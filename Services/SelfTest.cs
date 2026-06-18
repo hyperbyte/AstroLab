@@ -77,6 +77,9 @@ public static class SelfTest
                     if (args.Length < 2) throw new ArgumentException("uso: solvetest <path>");
                     SolveTest(args[1]);
                     break;
+                case "dsoparse":
+                    DsoParse();
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -583,5 +586,31 @@ public static class SelfTest
         if (!ok || wcs is null) throw new Exception($"solve falhou: {status}");
         Console.WriteLine($"  centro = {wcs.CenterRaDeg:F4}, {wcs.CenterDecDeg:F4}");
         Console.WriteLine($"  escala = {wcs.ScaleArcsecPerPixel:F2}\"/px · FOV {wcs.FovWidthDeg(img.Width):F1}×{wcs.FovHeightDeg(img.Height):F1}° · orient {wcs.OrientationDeg:F1}°");
+    }
+
+    static void DsoParse()
+    {
+        Console.WriteLine("== FieldAnnotation.ParseDeepSky ==");
+        const string txt =
+            "ASTAP DEEPSKY (cabeçalho a ignorar)\n" +
+            "RA[0..864000], DEC, name, length, width, orient\n" +
+            "57,324000,NP_2000\n" +                       // polo: ignorar (sem coords úteis? ainda parseia, mas sem tamanho=estrela)
+            "593645,-95155,Antares/α_Sco\n" +             // estrela nomeada (sem tamanho)
+            "590155,-95489,M4/NGC6121,360\n" +            // DSO circular 36'
+            "658140,-67140,M24/IC4715,1200,450,45\n";     // DSO elipse 120x45 @45
+
+        var objs = FieldAnnotation.ParseDeepSky(txt);
+        var antares = objs.Find(o => o.Name.StartsWith("Antares"))!;
+        var m4 = objs.Find(o => o.Name.StartsWith("M4"))!;
+        var m24 = objs.Find(o => o.Name.StartsWith("M24"))!;
+
+        if (Math.Abs(antares.RaDeg - 247.3521) > 0.01 || Math.Abs(antares.DecDeg + 26.4319) > 0.01)
+            throw new Exception($"Antares mal projetado: {antares.RaDeg},{antares.DecDeg}");
+        if (!antares.IsStar) throw new Exception("Antares devia ser estrela (sem tamanho)");
+        if (m4.IsStar || Math.Abs(m4.LengthArcmin - 36.0) > 0.01)
+            throw new Exception($"M4 devia ser DSO 36': {m4.LengthArcmin} star={m4.IsStar}");
+        if (Math.Abs(m24.WidthArcmin - 45.0) > 0.01 || Math.Abs(m24.AngleDeg - 45.0) > 0.01)
+            throw new Exception($"M24 elipse errada: {m24.WidthArcmin}/{m24.AngleDeg}");
+        Console.WriteLine($"  {objs.Count} objetos; Antares⭑ {antares.RaDeg:F2},{antares.DecDeg:F2}; M4 {m4.LengthArcmin:F1}' -> OK");
     }
 }
