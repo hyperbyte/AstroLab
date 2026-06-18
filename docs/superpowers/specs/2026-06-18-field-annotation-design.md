@@ -51,7 +51,7 @@ Conversões: **RA° = RA/2400**, **DEC° = DEC/3600**, tamanho′ = length/10.
   (com margem). 
 - **DSO:** filtra por tamanho mínimo (≥ 3′) para não poluir; desenha elipse com
   `WidthPx`/`HeightPx` (do tamanho real) + `AngleDeg`.
-- **Estrelas nomeadas:** entradas com `width == 0` (pontuais) → `IsStar=true`,
+- **Estrelas nomeadas:** entradas **sem campo de tamanho (length)** → `IsStar=true`,
   marcador pequeno; entram sem filtro de tamanho.
 - Tamanho em píxeis = (tamanho em arcsec) ÷ (escala ″/px do `wcs`).
 
