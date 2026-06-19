@@ -60,7 +60,7 @@ public static class FieldAnnotation
             {
                 if (!o.IsStar && o.LengthArcmin < MinDsoArcmin) continue;
                 var (fx, fy) = wcs.WorldToPixel(o.RaDeg, o.DecDeg);
-                double x = fx - 1, y = fy - 1;
+                double x = fx - 1, y = height - fy;   // ASTAP/WCS é FITS bottom-up → flip p/ array top-down
                 if (x < 0 || y < 0 || x >= width || y >= height) continue;
                 double wpx = o.WidthArcmin * 60.0 / arcsecPerPx;     // arcmin→arcsec→px
                 double hpx = o.LengthArcmin * 60.0 / arcsecPerPx;
