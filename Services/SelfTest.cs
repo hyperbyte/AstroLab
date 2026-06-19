@@ -80,6 +80,16 @@ public static class SelfTest
                     if (args.Length < 2) throw new ArgumentException("uso: solvetest <path>");
                     SolveTest(args[1]);
                     break;
+                case "dsoparse":
+                    DsoParse();
+                    break;
+                case "annotbuild":
+                    AnnotBuild();
+                    break;
+                case "annotatetest":
+                    if (args.Length < 2) throw new ArgumentException("uso: annotatetest <path>");
+                    AnnotateTest(args[1]);
+                    break;
                 default:
                     throw new ArgumentException($"comando desconhecido: {args[0]}");
             }
@@ -609,5 +619,101 @@ public static class SelfTest
         if (!ok || wcs is null) throw new Exception($"solve falhou: {status}");
         Console.WriteLine($"  centro = {wcs.CenterRaDeg:F4}, {wcs.CenterDecDeg:F4}");
         Console.WriteLine($"  escala = {wcs.ScaleArcsecPerPixel:F2}\"/px · FOV {wcs.FovWidthDeg(img.Width):F1}×{wcs.FovHeightDeg(img.Height):F1}° · orient {wcs.OrientationDeg:F1}°");
+    }
+
+    static void DsoParse()
+    {
+        Console.WriteLine("== FieldAnnotation.ParseDeepSky ==");
+        const string txt =
+            "ASTAP DEEPSKY (cabeçalho a ignorar)\n" +
+            "RA[0..864000], DEC, name, length, width, orient\n" +
+            "57,324000,NP_2000\n" +                       // polo: ignorar (sem coords úteis? ainda parseia, mas sem tamanho=estrela)
+            "593645,-95155,Antares/α_Sco\n" +             // estrela nomeada (sem tamanho)
+            "590155,-95489,M4/NGC6121,360\n" +            // DSO circular 36'
+            "658140,-67140,M24/IC4715,1200,450,45\n";     // DSO elipse 120x45 @45
+
+        var objs = FieldAnnotation.ParseDeepSky(txt);
+        var antares = objs.Find(o => o.Name.StartsWith("Antares"))!;
+        var m4 = objs.Find(o => o.Name.StartsWith("M4"))!;
+        var m24 = objs.Find(o => o.Name.StartsWith("M24"))!;
+
+        if (Math.Abs(antares.RaDeg - 247.3521) > 0.01 || Math.Abs(antares.DecDeg + 26.4319) > 0.01)
+            throw new Exception($"Antares mal projetado: {antares.RaDeg},{antares.DecDeg}");
+        if (!antares.IsStar) throw new Exception("Antares devia ser estrela (sem tamanho)");
+        if (m4.IsStar || Math.Abs(m4.LengthArcmin - 36.0) > 0.01)
+            throw new Exception($"M4 devia ser DSO 36': {m4.LengthArcmin} star={m4.IsStar}");
+        if (Math.Abs(m24.WidthArcmin - 45.0) > 0.01 || Math.Abs(m24.AngleDeg - 45.0) > 0.01)
+            throw new Exception($"M24 elipse errada: {m24.WidthArcmin}/{m24.AngleDeg}");
+        Console.WriteLine($"  {objs.Count} objetos; Antares⭑ {antares.RaDeg:F2},{antares.DecDeg:F2}; M4 {m4.LengthArcmin:F1}' -> OK");
+    }
+
+    static void AnnotBuild()
+    {
+        Console.WriteLine("== FieldAnnotation.Build (projeção + grelha) ==");
+        const string header =
+            "CTYPE1='RA---TAN'\nCTYPE2='DEC--TAN'\n" +
+            "CRPIX1=3.057500000000E+003\nCRPIX2=2.040500000000E+003\n" +
+            "CRVAL1=2.458169582032E+002\nCRVAL2=-2.495790306081E+001\n" +
+            "CD1_1=-1.835458761921E-004\nCD1_2=1.318058558158E-003\n" +
+            "CD2_1=1.319524801447E-003\nCD2_2=1.846106534218E-004\nPLTSOLVD=T\n";
+        var wcs = WcsSolution.Parse(header)!;
+        int W = 6114, H = 4080;
+
+        // astapDir null → sem catálogo → só grelha
+        var noCat = FieldAnnotation.Build(wcs, W, H, null);
+        if (noCat.Objects.Count != 0) throw new Exception("sem catálogo devia ter 0 objetos");
+        if (noCat.Grid.Count == 0) throw new Exception("devia ter linhas de grelha");
+        if (noCat.Width != W || noCat.Height != H) throw new Exception("dims erradas");
+
+        // com o catálogo real do ASTAP (M4 ~245.9/-26.5 está no campo de Rho Oph)
+        string? astapDir = System.IO.Path.GetDirectoryName(PlateSolve.FindAstap(null) ?? "");
+        var full = FieldAnnotation.Build(wcs, W, H, astapDir);
+        Console.WriteLine($"  só grelha: {noCat.Grid.Count} linhas | com catálogo: {full.Objects.Count} objetos no campo");
+        if (astapDir != null && full.Objects.Count == 0)
+            throw new Exception("esperava objetos no campo de Rho Oph (M4, etc.)");
+        // todos os objetos dentro da imagem
+        foreach (var o in full.Objects)
+            if (o.X < 0 || o.Y < 0 || o.X > W || o.Y > H)
+                throw new Exception($"objeto fora da imagem: {o.Name} ({o.X},{o.Y})");
+        Console.WriteLine("  -> OK");
+    }
+
+    static void AnnotateTest(string path)
+    {
+        Console.WriteLine($"== Anotação end-to-end: {path} ==");
+        var img = TiffIO.LoadFloat(path);
+        AstroPipeline.Normalize(img);
+        img = AstroPipeline.Crop(img, 0.012);
+        AstroPipeline.ExtractBackground(img, radial: true);
+        AstroPipeline.ColorCalibrate(img);
+
+        if (!PlateSolve.TrySolve(img, null, 247.0, 5.74, out var wcs, out var st) || wcs is null)
+            throw new Exception($"solve falhou: {st}");
+        string? astapDir = System.IO.Path.GetDirectoryName(PlateSolve.FindAstap(null) ?? "");
+        var ov = FieldAnnotation.Build(wcs, img.Width, img.Height, astapDir);
+        int stars = ov.Objects.Count(o => o.IsStar), dso = ov.Objects.Count - stars;
+        Console.WriteLine($"  {dso} DSO, {stars} estrelas nomeadas, {ov.Grid.Count} linhas de grelha no campo");
+
+        // queima o overlay num JPEG esticado (escala overlay→proxy) para inspeção
+        var p = ToneParams.Defaults;
+        AstroPipeline.Stretch(img, p); AstroPipeline.Scnr(img, p.Scnr); AstroPipeline.SaturationAndCurve(img, p.Saturation);
+        var proxy = PreviewRenderer.MakeProxy(img);
+        double k = (double)proxy.Width / ov.Width;
+        using var mat = proxy.AsMat();
+        using var bgr = new OpenCvSharp.Mat();
+        OpenCvSharp.Cv2.CvtColor(mat, bgr, OpenCvSharp.ColorConversionCodes.RGB2BGR);
+        using var u8 = new OpenCvSharp.Mat();
+        bgr.ConvertTo(u8, OpenCvSharp.MatType.CV_8UC3, 255.0);
+        foreach (var g in ov.Grid)
+            for (int i = 1; i < g.Points.Count; i++)
+                OpenCvSharp.Cv2.Line(u8, new((int)(g.Points[i - 1].X * k), (int)(g.Points[i - 1].Y * k)),
+                    new((int)(g.Points[i].X * k), (int)(g.Points[i].Y * k)), new(165, 110, 58), 1);
+        foreach (var o in ov.Objects)
+            OpenCvSharp.Cv2.Ellipse(u8, new((int)(o.X * k), (int)(o.Y * k)),
+                new((int)(Math.Max(o.WidthPx * k / 2, 3)), (int)(Math.Max(o.HeightPx * k / 2, 3))),
+                o.AngleDeg, 0, 360, o.IsStar ? new(255, 208, 159) : new(65, 179, 224), 1);
+        OpenCvSharp.Cv2.ImEncode(".jpg", u8, out byte[] buf);
+        File.WriteAllBytes("testdata/annotate_result.jpg", buf);
+        Console.WriteLine("  -> testdata/annotate_result.jpg");
     }
 }

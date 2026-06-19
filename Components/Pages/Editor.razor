@@ -24,6 +24,44 @@
             </div>
         }
 
+        @if (Session.Overlay is { } ov && _imgSrc is not null)
+        {
+            <svg class="annot-svg" viewBox="@($"0 0 {ov.Width} {ov.Height}")" preserveAspectRatio="xMidYMid meet">
+                @if (_annotGrid)
+                {
+                    @foreach (var g in ov.Grid)
+                    {
+                        <polyline points="@string.Join(' ', g.Points.Select(p => $"{p.X:F0},{p.Y:F0}"))"
+                                  fill="none" stroke="#3a6ea5" stroke-width="@Inv(_annotStroke)" opacity="0.5" />
+                    }
+                }
+                @if (_annotDso)
+                {
+                    @foreach (var o in ov.Objects.Where(o => !o.IsStar))
+                    {
+                        <ellipse cx="@o.X.ToString("F0")" cy="@o.Y.ToString("F0")"
+                                 rx="@((o.WidthPx / 2).ToString("F0"))" ry="@((o.HeightPx / 2).ToString("F0"))"
+                                 transform="@($"rotate({o.AngleDeg.ToString("F0")} {o.X:F0} {o.Y:F0})")"
+                                 fill="none" stroke="#e0b341" stroke-width="@Inv(_annotStroke)" opacity="0.8" />
+                        <g transform="@($"translate({(o.X + o.WidthPx / 2 + 6):F0} {o.Y:F0})")">
+                            <text fill="#e0b341" font-size="@Inv(_annotFont)">@o.Name</text>
+                        </g>
+                    }
+                }
+                @if (_annotStars)
+                {
+                    @foreach (var o in ov.Objects.Where(o => o.IsStar))
+                    {
+                        <circle cx="@o.X.ToString("F0")" cy="@o.Y.ToString("F0")" r="@Inv(_annotStroke * 3)"
+                                fill="none" stroke="#9fd0ff" stroke-width="@Inv(_annotStroke)" />
+                        <g transform="@($"translate({(o.X + 8):F0} {(o.Y - 8):F0})")">
+                            <text fill="#9fd0ff" font-size="@Inv(_annotFont)">@o.Name</text>
+                        </g>
+                    }
+                }
+            </svg>
+        }
+
         @if (_busy)
         {
             <div class="overlay">
@@ -207,6 +245,15 @@
             else if (Session.SolveStatus is { } st)
             {
                 <div class="slider-note" style="color:var(--accent)">@st</div>
+            }
+
+            @if (Session.Overlay is not null)
+            {
+                <div class="annot-layers">
+                    <label class="check"><input type="checkbox" checked="@_annotDso" @onchange="@(e => _annotDso = e.Value is true)" /> Objetos (DSO)</label>
+                    <label class="check"><input type="checkbox" checked="@_annotGrid" @onchange="@(e => _annotGrid = e.Value is true)" /> Grelha RA/Dec</label>
+                    <label class="check"><input type="checkbox" checked="@_annotStars" @onchange="@(e => _annotStars = e.Value is true)" /> Estrelas nomeadas</label>
+                </div>
             }
         </section>
 
@@ -394,6 +441,13 @@
     string? _inspImg;
     long _inspMs;
     int _inspCell = 512;
+
+    // --- overlay de anotação ---
+    bool _annotDso = true, _annotGrid = true, _annotStars = true;
+    static string Inv(double v) => v.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture);
+    // espessura/fonte do overlay em unidades da imagem (escalam com o viewBox)
+    double _annotStroke => Math.Max(2, (Session.FullWidth) / 1200.0);
+    double _annotFont => Math.Max(14, (Session.FullWidth) / 90.0);
 
     // --- export ---
     bool _exportOpen, _exporting, _exportDone;
